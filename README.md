@@ -26,7 +26,12 @@ Mono, glass cards, console frames).
   token) in the back office; the agent logs in with its own credential. List,
   rename, enable/disable, rotate token, delete.
 - ✅ Dashboard: device list + **GPIO control** (digital switch, PWM/servo slider).
-- ⏳ Camera (M2), scripts/shell (M3), pairing + 2FA (M4), mobile agents (M5).
+- ✅ **Camera (M2)**: browser agent at `/connect` — open it on a phone/laptop,
+  paste the device access, grant camera, and it streams to the dashboard over
+  **WebRTC** (STUN now; TURN/coturn for hard NATs is the remaining M2 piece).
+- ✅ **Browser agent**: no install for camera devices; the Python agent is only
+  for GPIO/shell on a Pi.
+- ⏳ scripts/shell (M3), TURN relay, pairing + 2FA (M4), native mobile wrap (M5).
 
 ## Run it locally
 

@@ -49,7 +49,7 @@ function AddDevice({ onCreated }) {
 }
 
 export default function Devices({ me }) {
-  const { connected, devices: live, action } = useRemote();
+  const { connected, devices: live, action, sendSignal, onSignal } = useRemote();
   const [provisioned, setProvisioned] = useState(null);
   const [reveal, setReveal] = useState(null); // { device, token } shown once
   const [err, setErr] = useState('');
@@ -104,7 +104,7 @@ export default function Devices({ me }) {
         ) : (
           <div className="srv-grid">
             {cards.map((d) => (
-              <DeviceCard key={d.id} device={d} action={action} admin={admin}
+              <DeviceCard key={d.id} device={d} action={action} sendSignal={sendSignal} onSignal={onSignal} admin={admin}
                 onRename={onRename} onToggle={onToggle} onRotate={onRotate} onDelete={onDelete} onReveal={onReveal} />
             ))}
           </div>

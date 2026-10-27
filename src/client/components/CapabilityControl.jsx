@@ -1,8 +1,9 @@
 import { useState } from 'react';
+import CameraView from './CameraView.jsx';
 
-// Renders the controls for one capability on one device. M1 wires `gpio`
-// (digital switch + PWM/servo slider); the other capabilities are advertised
-// but land in later milestones.
+// Renders the controls for one capability on one device. Wires `camera`
+// (WebRTC live view) and `gpio` (digital switch + PWM/servo slider); the other
+// capabilities are advertised but land in later milestones.
 
 function Note({ note }) {
   if (!note) return <div className="ctl-note" />;
@@ -75,7 +76,11 @@ function ServoPin({ device, pin, action }) {
   );
 }
 
-export default function CapabilityControl({ device, cap, action }) {
+export default function CapabilityControl({ device, cap, action, sendSignal, onSignal }) {
+  if (cap.cap === 'camera') {
+    return <CameraView device={device} sendSignal={sendSignal} onSignal={onSignal} />;
+  }
+
   if (cap.cap === 'gpio') {
     const pins = cap.pins || [];
     return (
@@ -94,8 +99,8 @@ export default function CapabilityControl({ device, cap, action }) {
   }
 
   // advertised but not yet wired
-  const labels = { camera: 'Camera', scripts: 'Scripts', shell: 'Shell', media: 'Media' };
-  const next = { camera: 'M2', scripts: 'M3', shell: 'M3', media: 'M6' };
+  const labels = { scripts: 'Scripts', shell: 'Shell', media: 'Media' };
+  const next = { scripts: 'M3', shell: 'M3', media: 'M6' };
   return (
     <div className="cap-block">
       <div className="cap-head">{labels[cap.cap] || cap.cap}</div>

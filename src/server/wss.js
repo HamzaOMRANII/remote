@@ -59,6 +59,9 @@ function attach(server, { auth, registry, devices }) {
       if (msg.type === proto.ACTION) {
         const err = registry.routeAction(ws, msg);
         if (err) ws.send(JSON.stringify({ type: 'result', reqId: msg.reqId, ok: false, error: err }));
+      } else if (msg.type === proto.SIGNAL) {
+        const err = registry.signalToAgent(ws, msg);
+        if (err) ws.send(JSON.stringify({ type: 'signal', from: msg.device, data: { kind: 'error', error: err } }));
       }
     });
 
@@ -104,6 +107,8 @@ function attach(server, { auth, registry, devices }) {
 
       if (msg.type === proto.RESULT || msg.type === proto.STREAM) {
         registry.routeFromAgent(msg);
+      } else if (msg.type === proto.SIGNAL) {
+        registry.signalToViewer(ws, msg);
       }
     });
 

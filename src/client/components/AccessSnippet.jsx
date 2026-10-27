@@ -45,9 +45,10 @@ export default function AccessSnippet({ device, token, onDone }) {
   return (
     <section className="panel" style={{ borderColor: 'color-mix(in srgb, var(--petrol-bright) 45%, transparent)' }}>
       <h2>Access for {device.label || device.id}</h2>
-      <p className="muted rem-sub">Put this config into the device's
-        <code> remote_agent/config.json</code>, then run the agent. You can reveal
-        it again any time, or rotate the token to invalidate the old one.</p>
+      <p className="muted rem-sub"><b>Phone / laptop:</b> open <code>{location.origin}/connect</code> on the
+        device and paste this (or just the token) to stream the camera — no install.
+        <br /><b>Raspberry Pi:</b> put this config in <code>remote_agent/config.json</code> and run the agent (GPIO).
+        <br />Revealable again any time; rotate to invalidate the old token.</p>
 
       <div className="out" style={{ marginTop: 10 }}>
         <div className="out-head">config.json</div>

@@ -317,3 +317,12 @@ input[type=range].slider:disabled{ opacity:.5; }
 .empty-wrap p{ margin:0; max-width:40ch; }
 .conn{ display:inline-flex; align-items:center; gap:7px; font-family:var(--font-mono); font-size:12px; color:var(--ink-muted); }
 .conn .live-dot.off{ background:var(--ink-dim); animation:none; }
+
+/* ---------- camera pane (WebRTC) ---------- */
+.cam-pane{ position:relative; width:100%; aspect-ratio:16/9; background:#05060a; border:1px solid var(--navy-line);
+  border-radius:12px; overflow:hidden; }
+.cam-pane video{ width:100%; height:100%; object-fit:cover; display:block; background:#05060a; }
+.cam-overlay{ position:absolute; inset:0; display:grid; place-items:center; }
+.cam-badge{ position:absolute; top:10px; left:10px; display:inline-flex; align-items:center; gap:6px;
+  font-family:var(--font-mono); font-size:11px; text-transform:uppercase; letter-spacing:.05em;
+  color:#fff; background:rgba(5,6,10,0.6); padding:3px 9px; border-radius:999px; backdrop-filter:blur(4px); }

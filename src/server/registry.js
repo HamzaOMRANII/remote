@@ -13,9 +13,10 @@
 const crypto = require('node:crypto');
 
 function createRegistry() {
-  const agents = new Map();   // deviceId -> { ws, device, capabilities, since }
-  const viewers = new Set();  // Set<ws>
-  const pending = new Map();  // serverReqId -> { viewerWs, clientReqId, device, cap, do, at }
+  const agents = new Map();      // deviceId -> { ws, device, capabilities, since }
+  const viewers = new Set();     // Set<ws>
+  const viewersById = new Map(); // viewerId -> ws
+  const pending = new Map();      // serverReqId -> { viewerWs, clientReqId, device, cap, do, at }
 
   function deviceList() {
     return [...agents.values()].map(({ device, capabilities }) => ({
@@ -35,7 +36,9 @@ function createRegistry() {
   }
 
   function addViewer(ws) {
+    ws._viewerId = crypto.randomUUID();
     viewers.add(ws);
+    viewersById.set(ws._viewerId, ws);
     if (ws.readyState === ws.OPEN) {
       ws.send(JSON.stringify({ type: 'devices', devices: deviceList() }));
     }
@@ -43,8 +46,25 @@ function createRegistry() {
 
   function removeViewer(ws) {
     viewers.delete(ws);
+    if (ws._viewerId) viewersById.delete(ws._viewerId);
     // drop any pending requests owned by this viewer
     for (const [id, p] of pending) if (p.viewerWs === ws) pending.delete(id);
+  }
+
+  // WebRTC signaling relay -------------------------------------------------
+  // Viewer -> agent: tag with the viewer's id so the agent can reply to it.
+  function signalToAgent(viewerWs, msg) {
+    const entry = agents.get(msg.device);
+    if (!entry) return 'device offline';
+    entry.ws.send(JSON.stringify({ type: 'signal', from: viewerWs._viewerId, data: msg.data }));
+    return null;
+  }
+
+  // Agent -> viewer: route by the viewer id the agent is replying to.
+  function signalToViewer(agentWs, msg) {
+    const v = viewersById.get(msg.to);
+    if (!v || v.readyState !== v.OPEN) return;
+    v.send(JSON.stringify({ type: 'signal', from: agentWs._deviceId, data: msg.data }));
   }
 
   function addAgent(ws, device, capabilities) {
@@ -122,6 +142,7 @@ function createRegistry() {
     agents, viewers,
     addViewer, removeViewer, addAgent, removeAgent,
     routeAction, routeFromAgent, deviceList,
+    signalToAgent, signalToViewer,
   };
 }
 

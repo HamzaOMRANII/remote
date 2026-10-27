@@ -5,7 +5,18 @@
 
 const { sendJson, readJsonBody } = require('./http-util');
 
-async function handle(req, res, pathname, { auth, users, devices, registry }) {
+async function handle(req, res, pathname, { auth, users, devices, registry, cfg }) {
+  // GET /api/ice — WebRTC ICE servers (STUN always; TURN if configured in
+  // config.server.turn). Public: the browser agent needs it before human login.
+  if (pathname === '/api/ice' && req.method === 'GET') {
+    const iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+    const turn = cfg && cfg.server && cfg.server.turn;
+    if (turn && turn.urls) {
+      iceServers.push({ urls: turn.urls, username: turn.username, credential: turn.credential });
+    }
+    return sendJson(res, 200, { iceServers });
+  }
+
   // ---- auth ----
 
   // POST /api/login { username, password }

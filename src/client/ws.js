@@ -6,7 +6,7 @@
 // change both if the protocol changes).
 import { useEffect, useState } from 'react';
 
-const T = { ACTION: 'action', RESULT: 'result', STREAM: 'stream', DEVICES: 'devices', ERROR: 'error' };
+const T = { ACTION: 'action', RESULT: 'result', STREAM: 'stream', DEVICES: 'devices', ERROR: 'error', SIGNAL: 'signal' };
 
 let sock = null;
 let backoff = 1000;
@@ -14,6 +14,7 @@ let reqSeq = 0;
 const pending = new Map();           // reqId -> { resolve, reject, timer }
 const state = { connected: false, devices: [] };
 const listeners = new Set();
+const signalListeners = new Map();   // deviceId -> Set(cb)  (incoming WebRTC signals)
 
 function emit() {
   for (const l of listeners) l({ ...state });
@@ -47,6 +48,9 @@ function connect() {
         pending.delete(msg.reqId);
         msg.ok ? p.resolve(msg.data) : p.reject(new Error(msg.error || 'failed'));
       }
+    } else if (msg.type === T.SIGNAL) {
+      const set = signalListeners.get(msg.from);
+      if (set) for (const cb of set) cb(msg.data);
     }
     // STREAM chunks are handled per-feature later (terminal/scripts).
   };
@@ -76,6 +80,18 @@ function action(device, cap, op, args) {
   });
 }
 
+// WebRTC signaling for the camera: send to a device, subscribe to replies.
+function sendSignal(device, data) {
+  if (sock && sock.readyState === WebSocket.OPEN) {
+    sock.send(JSON.stringify({ type: T.SIGNAL, device, data }));
+  }
+}
+function onSignal(device, cb) {
+  if (!signalListeners.has(device)) signalListeners.set(device, new Set());
+  signalListeners.get(device).add(cb);
+  return () => { const s = signalListeners.get(device); if (s) s.delete(cb); };
+}
+
 export function useRemote() {
   const [snap, setSnap] = useState({ ...state });
   useEffect(() => {
@@ -83,5 +99,5 @@ export function useRemote() {
     connect();
     return () => listeners.delete(setSnap);
   }, []);
-  return { ...snap, action };
+  return { ...snap, action, sendSignal, onSignal };
 }

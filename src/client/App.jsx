@@ -4,6 +4,7 @@ import { api } from './api.js';
 import Login from './pages/Login.jsx';
 import Devices from './pages/Devices.jsx';
 import Users from './pages/Users.jsx';
+import Connect from './pages/Connect.jsx';
 import Background from './components/Background.jsx';
 
 export default function App() {
@@ -12,13 +13,14 @@ export default function App() {
   const [me, setMe] = useState(undefined);
 
   useEffect(() => {
-    if (path === '/login') return;
+    if (path === '/login' || path === '/connect') return;
     api.me()
       .then((d) => setMe({ username: d.username, role: d.role }))
       .catch(() => { setMe(null); go('/login')(); });
   }, [path]);
 
   if (path === '/login') return <Login />;
+  if (path === '/connect') return <Connect />;   // browser agent — device credentials, no human login
   if (me === undefined) return <Background />;   // brief session check
   if (me === null) return <Background />;         // redirecting to /login
 

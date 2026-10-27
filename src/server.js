@@ -102,7 +102,10 @@ const server = http.createServer(async (req, res) => {
   const isRoute = pathname.endsWith('/') || !path.extname(pathname);
   if (isRoute) {
     const normalized = pathname.replace(/\/+$/, '') || '/';
-    if (normalized !== '/login' && !auth.isAuthed(req)) {
+    // /login and /connect (the browser agent) are reachable without a human
+    // session — /connect authenticates with the device's own access token.
+    const openRoutes = normalized === '/login' || normalized === '/connect';
+    if (!openRoutes && !auth.isAuthed(req)) {
       res.writeHead(302, { Location: '/login' });
       return res.end();
     }

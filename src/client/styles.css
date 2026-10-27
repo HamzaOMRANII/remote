@@ -326,3 +326,16 @@ input[type=range].slider:disabled{ opacity:.5; }
 .cam-badge{ position:absolute; top:10px; left:10px; display:inline-flex; align-items:center; gap:6px;
   font-family:var(--font-mono); font-size:11px; text-transform:uppercase; letter-spacing:.05em;
   color:#fff; background:rgba(5,6,10,0.6); padding:3px 9px; border-radius:999px; backdrop-filter:blur(4px); }
+
+/* ---------- form selects + native controls (fix: role dropdown matched inputs) ---------- */
+/* Native controls (select popups, scrollbars, date pickers) follow the dark UI. */
+:root{ color-scheme: dark; }
+/* Style bare <select> exactly like the themed text inputs. The more specific
+   .logs-bar/.action-row select rules above still win where they apply. */
+select{
+  padding: 10px 12px; background: var(--tile); color: var(--ink);
+  border: 1px solid var(--navy-line); border-radius: 10px;
+  font-family: var(--font-body); font-size: 14px; line-height: 1.3;
+}
+select:focus{ outline: 2px solid var(--petrol-bright); outline-offset: 1px; border-color: transparent; }
+.field select{ width: 100%; }

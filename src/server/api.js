@@ -62,6 +62,15 @@ async function handle(req, res, pathname, { auth, users, devices, registry, cfg 
     return sendJson(res, 200, { authed: true, username: id.u, role: id.r });
   }
 
+  // POST /api/verify-password — re-auth gate before opening a shell
+  if (pathname === '/api/verify-password' && req.method === 'POST') {
+    const id = auth.identity(req);
+    if (!id) return sendJson(res, 401, { error: 'unauthorized' });
+    const body = await readJsonBody(req).catch(() => null);
+    const ok = !!users.verify(id.u, body && body.password);
+    return sendJson(res, ok ? 200 : 401, ok ? { ok: true } : { error: 'Incorrect password.' });
+  }
+
   // ---- user CRUD (admin only) ----
   if (pathname === '/api/users' || pathname.startsWith('/api/users/')) {
     if (!auth.isAuthed(req)) return sendJson(res, 401, { error: 'unauthorized' });

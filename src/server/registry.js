@@ -100,6 +100,13 @@ function createRegistry() {
     }
   }
 
+  // Long-lived streaming ops (a running script's output, an open shell) must not
+  // be timed out — they stay pending until the agent sends a final result or the
+  // device disconnects.
+  const isStreaming = (cap, op) => (cap === 'shell' && op === 'open') || (cap === 'scripts' && op === 'run');
+  // High-frequency keystroke/resize traffic isn't worth an audit line.
+  const isNoisy = (cap, op) => cap === 'shell' && (op === 'input' || op === 'resize');
+
   // Viewer asked to run an action on a device. Returns an error string if it
   // could not even be dispatched (caller may relay it), else null.
   function routeAction(viewerWs, msg) {
@@ -111,16 +118,20 @@ function createRegistry() {
     const serverReqId = crypto.randomUUID();
     pending.set(serverReqId, { viewerWs, clientReqId, device, cap, do: op, at: Date.now() });
 
-    console.log(`[audit] action device=${device} cap=${cap} do=${op} args=${JSON.stringify(args || {})}`);
+    if (!isNoisy(cap, op)) {
+      const who = viewerWs._user ? ` user=${viewerWs._user}` : '';
+      console.log(`[audit]${who} device=${device} cap=${cap} do=${op} args=${JSON.stringify(args || {})}`);
+    }
     entry.ws.send(JSON.stringify({ type: 'action', reqId: serverReqId, cap, do: op, args }));
 
-    // safety timeout so a silent agent doesn't leave the viewer hanging
-    setTimeout(() => {
-      if (pending.has(serverReqId)) {
-        reply(pending.get(serverReqId), { ok: false, error: 'timed out' });
-        pending.delete(serverReqId);
-      }
-    }, 15000).unref?.();
+    if (!isStreaming(cap, op)) {
+      setTimeout(() => {
+        if (pending.has(serverReqId)) {
+          reply(pending.get(serverReqId), { ok: false, error: 'timed out' });
+          pending.delete(serverReqId);
+        }
+      }, 15000).unref?.();
+    }
     return null;
   }
 

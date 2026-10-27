@@ -48,15 +48,22 @@ function attach(server, { auth, registry, devices }) {
   });
 
   // ---- viewers ----
-  wssViewer.on('connection', (ws) => {
+  wssViewer.on('connection', (ws, req) => {
     ws.isAlive = true;
     ws.on('pong', () => { ws.isAlive = true; });
+    const id = auth.identity(req);
+    ws._user = id && id.u;
+    ws._role = id && id.r;
     registry.addViewer(ws);
 
     ws.on('message', (raw) => {
       const msg = proto.safeParse(raw.toString());
       if (!msg) return;
       if (msg.type === proto.ACTION) {
+        // the shell is admin-only (powerful + physical-adjacent); scripts/gpio/camera are open to any signed-in viewer
+        if (msg.cap === 'shell' && ws._role !== 'admin') {
+          return ws.send(JSON.stringify({ type: 'result', reqId: msg.reqId, ok: false, error: 'shell is admin only' }));
+        }
         const err = registry.routeAction(ws, msg);
         if (err) ws.send(JSON.stringify({ type: 'result', reqId: msg.reqId, ok: false, error: err }));
       } else if (msg.type === proto.SIGNAL) {

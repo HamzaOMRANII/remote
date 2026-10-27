@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import CameraView from './CameraView.jsx';
+import ScriptRunner from './ScriptRunner.jsx';
+import ShellTerminal from './ShellTerminal.jsx';
 
 // Renders the controls for one capability on one device. Wires `camera`
-// (WebRTC live view) and `gpio` (digital switch + PWM/servo slider); the other
-// capabilities are advertised but land in later milestones.
+// (WebRTC), `gpio` (switch/slider), `scripts` (allowlisted runners) and `shell`
+// (admin-gated terminal); `media` lands later.
 
 function Note({ note }) {
   if (!note) return <div className="ctl-note" />;
@@ -76,9 +78,17 @@ function ServoPin({ device, pin, action }) {
   );
 }
 
-export default function CapabilityControl({ device, cap, action, sendSignal, onSignal }) {
+export default function CapabilityControl({ device, cap, action, runStream, sendAction, sendSignal, onSignal }) {
   if (cap.cap === 'camera') {
     return <CameraView device={device} sendSignal={sendSignal} onSignal={onSignal} />;
+  }
+
+  if (cap.cap === 'scripts') {
+    return <ScriptRunner device={device} cap={cap} runStream={runStream} />;
+  }
+
+  if (cap.cap === 'shell') {
+    return <ShellTerminal device={device} runStream={runStream} sendAction={sendAction} />;
   }
 
   if (cap.cap === 'gpio') {
@@ -99,8 +109,8 @@ export default function CapabilityControl({ device, cap, action, sendSignal, onS
   }
 
   // advertised but not yet wired
-  const labels = { scripts: 'Scripts', shell: 'Shell', media: 'Media' };
-  const next = { scripts: 'M3', shell: 'M3', media: 'M6' };
+  const labels = { media: 'Media' };
+  const next = { media: 'M6' };
   return (
     <div className="cap-block">
       <div className="cap-head">{labels[cap.cap] || cap.cap}</div>

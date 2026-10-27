@@ -32,7 +32,10 @@ Mono, glass cards, console frames).
   issues time-limited credentials against the existing turn.omranisystems.com.
 - ✅ **Browser agent**: no install for camera devices; the Python agent is only
   for GPIO/shell on a Pi.
-- ⏳ scripts/shell (M3), pairing + 2FA (M4), native mobile wrap (M5), RTSP→WebRTC gateway for IP cameras.
+- ✅ **Scripts & shell (M3)**: allow-listed script runners (streamed output) and
+  an admin-only, password-gated, audit-logged interactive terminal (xterm.js <->
+  pty), both on the Python agent (Pi/laptop).
+- ⏳ pairing + 2FA (M4), native mobile wrap (M5), RTSP→WebRTC gateway for IP cameras.
 
 ## Run it locally
 

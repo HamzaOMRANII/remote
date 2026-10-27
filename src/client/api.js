@@ -22,6 +22,7 @@ export const api = {
   login: (username, password) => req('POST', '/api/login', { username, password }),
   logout: () => req('POST', '/api/logout'),
   me: () => req('GET', '/api/me'),
+  verifyPassword: (password) => req('POST', '/api/verify-password', { password }),
 
   // user CRUD (admin only)
   listUsers: () => req('GET', '/api/users'),

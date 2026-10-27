@@ -4,7 +4,7 @@ import CapabilityControl from './CapabilityControl.jsx';
 // One card per provisioned device. Shows identity + online status; when online,
 // renders a control block per advertised capability. Admins get a manage row
 // (rename, enable/disable, rotate token, delete).
-export default function DeviceCard({ device, action, sendSignal, onSignal, admin, onRename, onToggle, onRotate, onDelete, onReveal }) {
+export default function DeviceCard({ device, action, runStream, sendAction, sendSignal, onSignal, admin, onRename, onToggle, onRotate, onDelete, onReveal }) {
   const [editing, setEditing] = useState(false);
   const [label, setLabel] = useState(device.label || device.name || device.id);
   const [confirmDel, setConfirmDel] = useState(false);
@@ -35,7 +35,8 @@ export default function DeviceCard({ device, action, sendSignal, onSignal, admin
         <div className="dev-caps">
           {caps.map((cap) => (
             <CapabilityControl key={cap.cap} device={device.id} cap={cap}
-              action={action} sendSignal={sendSignal} onSignal={onSignal} />
+              action={action} runStream={runStream} sendAction={sendAction}
+              sendSignal={sendSignal} onSignal={onSignal} />
           ))}
         </div>
       ) : (

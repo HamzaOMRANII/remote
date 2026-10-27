@@ -11,7 +11,9 @@ Part of the Omrani Systems family — it reuses the `server_monitoring` /
 `it.omranisystems.com` design system (navy + petrol, Sora / Inter / JetBrains
 Mono, glass cards, console frames).
 
-## Status — M1 (vertical slice)
+## Status — M1 (vertical slice) · LIVE
+
+**Deployed:** https://remote.omranisystems.com (pm2 app `remote` on 127.0.0.1:16010, nginx vhost, Cloudflare). See [`deploy/INSTALL.md`](./deploy/INSTALL.md).
 
 - ✅ Zero-dep Node server + `ws`: static SPA serving, login gate, `/healthz`.
 - ✅ Capability protocol ([`protocol/messages.js`](./protocol/messages.js)):

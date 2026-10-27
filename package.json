@@ -1,0 +1,24 @@
+{
+  "name": "omrani-remote",
+  "version": "0.1.0",
+  "private": true,
+  "description": "remote.omranisystems.com: self-hosted remote access to your own devices (camera, GPIO, scripts, shell).",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "start": "node src/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.1.2",
+    "vite": "^8.3.4"
+  }
+}

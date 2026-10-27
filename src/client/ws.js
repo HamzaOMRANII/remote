@@ -1,0 +1,87 @@
+// Viewer WebSocket client: one connection to /ws, auto-reconnecting, exposed
+// to React through a tiny store + useRemote() hook.
+//
+// It mirrors the protocol string constants from protocol/messages.js (kept
+// duplicated so the ESM client and CommonJS server don't fight over modules —
+// change both if the protocol changes).
+import { useEffect, useState } from 'react';
+
+const T = { ACTION: 'action', RESULT: 'result', STREAM: 'stream', DEVICES: 'devices', ERROR: 'error' };
+
+let sock = null;
+let backoff = 1000;
+let reqSeq = 0;
+const pending = new Map();           // reqId -> { resolve, reject, timer }
+const state = { connected: false, devices: [] };
+const listeners = new Set();
+
+function emit() {
+  for (const l of listeners) l({ ...state });
+}
+
+function wsUrl() {
+  const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${scheme}://${location.host}/ws`;
+}
+
+function connect() {
+  if (sock && (sock.readyState === WebSocket.OPEN || sock.readyState === WebSocket.CONNECTING)) return;
+  sock = new WebSocket(wsUrl());
+
+  sock.onopen = () => {
+    backoff = 1000;
+    state.connected = true;
+    emit();
+  };
+
+  sock.onmessage = (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch { return; }
+    if (msg.type === T.DEVICES) {
+      state.devices = msg.devices || [];
+      emit();
+    } else if (msg.type === T.RESULT) {
+      const p = pending.get(msg.reqId);
+      if (p) {
+        clearTimeout(p.timer);
+        pending.delete(msg.reqId);
+        msg.ok ? p.resolve(msg.data) : p.reject(new Error(msg.error || 'failed'));
+      }
+    }
+    // STREAM chunks are handled per-feature later (terminal/scripts).
+  };
+
+  const down = () => {
+    state.connected = false;
+    emit();
+    sock = null;
+    setTimeout(connect, backoff);
+    backoff = Math.min(backoff * 2, 15000);
+  };
+  sock.onclose = down;
+  sock.onerror = () => { try { sock.close(); } catch {} };
+}
+
+// Run an action on a device; resolves with the agent's result data.
+function action(device, cap, op, args) {
+  return new Promise((resolve, reject) => {
+    if (!sock || sock.readyState !== WebSocket.OPEN) return reject(new Error('not connected'));
+    const reqId = `v${++reqSeq}`;
+    const timer = setTimeout(() => {
+      pending.delete(reqId);
+      reject(new Error('timed out'));
+    }, 20000);
+    pending.set(reqId, { resolve, reject, timer });
+    sock.send(JSON.stringify({ type: T.ACTION, reqId, device, cap, do: op, args }));
+  });
+}
+
+export function useRemote() {
+  const [snap, setSnap] = useState({ ...state });
+  useEffect(() => {
+    listeners.add(setSnap);
+    connect();
+    return () => listeners.delete(setSnap);
+  }, []);
+  return { ...snap, action };
+}

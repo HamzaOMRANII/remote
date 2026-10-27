@@ -1,0 +1,9 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 16010,
+    "password": "change-me-to-a-strong-password",
+    "sessionSecret": "change-me-to-a-long-random-string",
+    "agentToken": "change-me-to-a-long-random-agent-token"
+  }
+}

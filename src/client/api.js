@@ -1,5 +1,5 @@
-// Thin fetch wrapper for the auth surface. Realtime device traffic goes over
-// the WebSocket (ws.js), not here.
+// Thin fetch wrapper for the auth + user-management surface. Realtime device
+// traffic goes over the WebSocket (ws.js), not here.
 import { go } from './router.js';
 
 async function req(method, url, body) {
@@ -19,7 +19,13 @@ async function req(method, url, body) {
 }
 
 export const api = {
-  login: (password) => req('POST', '/api/login', { password }),
+  login: (username, password) => req('POST', '/api/login', { username, password }),
   logout: () => req('POST', '/api/logout'),
   me: () => req('GET', '/api/me'),
+
+  // user CRUD (admin only)
+  listUsers: () => req('GET', '/api/users'),
+  createUser: (u) => req('POST', '/api/users', u),
+  updateUser: (id, patch) => req('PUT', `/api/users/${encodeURIComponent(id)}`, patch),
+  deleteUser: (id) => req('DELETE', `/api/users/${encodeURIComponent(id)}`),
 };

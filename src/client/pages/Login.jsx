@@ -4,6 +4,7 @@ import { api } from '../api.js';
 import { go } from '../router.js';
 
 export default function Login() {
+  const [username, setUsername] = useState('');
   const [pw, setPw] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
@@ -12,10 +13,10 @@ export default function Login() {
     e.preventDefault();
     setBusy(true); setErr('');
     try {
-      await api.login(pw);
+      await api.login(username, pw);
       go('/')();
     } catch {
-      setErr('Incorrect password.');
+      setErr('Incorrect username or password.');
     } finally { setBusy(false); }
   }
 
@@ -29,7 +30,9 @@ export default function Login() {
           </div>
           <div className="domain">remote.omranisystems.com</div>
           <form onSubmit={submit}>
-            <input type="password" placeholder="Dashboard password" autoFocus
+            <input type="text" placeholder="Username" autoFocus autoCapitalize="none"
+              autoCorrect="off" value={username} onChange={(e) => setUsername(e.target.value)} />
+            <input type="password" placeholder="Password"
               value={pw} onChange={(e) => setPw(e.target.value)} />
             <button type="submit" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
             <div className="login-err">{err}</div>

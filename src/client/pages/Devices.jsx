@@ -3,13 +3,13 @@ import TopBar from '../components/TopBar.jsx';
 import DeviceCard from '../components/DeviceCard.jsx';
 import { useRemote } from '../ws.js';
 
-export default function Devices() {
+export default function Devices({ me }) {
   const { connected, devices, action } = useRemote();
 
   return (
     <>
       <Background />
-      <TopBar connected={connected} />
+      <TopBar me={me} connected={connected} />
       <main className="wrap">
         <div>
           <h1 style={{ fontFamily: 'var(--font-mark)', fontSize: 24, margin: 0 }}>

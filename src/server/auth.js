@@ -50,27 +50,30 @@ function constantTimeEquals(a, b) {
 
 function create(cfg) {
   const secret = cfg.server.sessionSecret || 'insecure-dev-secret';
-  const password = cfg.server.password || '';
   const agentToken = cfg.server.agentToken || '';
 
   return {
-    isAuthed(req) {
-      return !!verify(parseCookies(req)[COOKIE], secret);
+    // Returns the session payload { u: username, r: role } or null.
+    identity(req) {
+      return verify(parseCookies(req)[COOKIE], secret);
     },
-    cookieFor() {
-      const token = sign({ ok: true, exp: Date.now() + MAX_AGE_MS }, secret);
+    isAuthed(req) {
+      return !!this.identity(req);
+    },
+    isAdmin(req) {
+      const id = this.identity(req);
+      return !!id && id.r === 'admin';
+    },
+    cookieFor(user) {
+      const token = sign({ u: user.username, r: user.role, exp: Date.now() + MAX_AGE_MS }, secret);
       return `${COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${MAX_AGE_MS / 1000}`;
     },
     clearCookie() {
       return `${COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`;
     },
-    checkPassword(supplied) {
-      return !!password && constantTimeEquals(supplied || '', password);
-    },
     checkAgentToken(supplied) {
       return !!agentToken && constantTimeEquals(supplied || '', agentToken);
     },
-    hasPassword: !!password,
   };
 }
 

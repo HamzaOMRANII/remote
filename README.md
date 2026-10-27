@@ -15,7 +15,9 @@ Mono, glass cards, console frames).
 
 **Deployed:** https://remote.omranisystems.com (pm2 app `remote` on 127.0.0.1:16010, nginx vhost, Cloudflare). See [`deploy/INSTALL.md`](./deploy/INSTALL.md).
 
-- ✅ Zero-dep Node server + `ws`: static SPA serving, login gate, `/healthz`.
+- ✅ Zero-dep Node server + `ws`: static SPA serving, `/healthz`.
+- ✅ **User accounts**: username + password login (scrypt-hashed, `data/users.json`),
+  roles (admin/user), admin-only **user CRUD** page. Admin seeded from config.
 - ✅ Capability protocol ([`protocol/messages.js`](./protocol/messages.js)):
   `hello` / `action` / `result` / `stream`, device registry + request routing.
 - ✅ Two WebSocket paths: `/ws` (viewers, cookie-authed) and `/agent` (agents,

@@ -1,74 +1,143 @@
 import { useEffect, useRef, useState } from 'react';
 import Background from '../components/Background.jsx';
 
-// Browser agent — the page you open ON the device. Paste the access (config or
-// token), grant camera, and it connects as an agent and streams to the
-// dashboard over WebRTC. No install, no command line. Works while the page is
-// open (iOS: foreground only).
+// Browser agent — the page you open ON the device. Paste the access, choose the
+// camera + microphone, grant permission, and it streams to the dashboard over
+// WebRTC. No install, no command line. Works while the page is open (iOS:
+// foreground only).
+//
+// Built-in / USB / USB-C / Bluetooth cameras all appear as selectable video
+// inputs. IP cameras (RTSP) can't be captured by a browser directly — they need
+// a server-side gateway (planned); an MJPEG URL that allows CORS is attempted.
 
 const LS_KEY = 'remote.agent.cred';
-
-function loadCred() {
-  try { return JSON.parse(localStorage.getItem(LS_KEY)) || null; } catch { return null; }
-}
-function saveCred(c) { try { localStorage.setItem(LS_KEY, JSON.stringify(c)); } catch {} }
+const loadCred = () => { try { return JSON.parse(localStorage.getItem(LS_KEY)) || null; } catch { return null; } };
+const saveCred = (c) => { try { localStorage.setItem(LS_KEY, JSON.stringify(c)); } catch {} };
 
 export default function Connect() {
   const saved = loadCred();
   const [id, setId] = useState(saved?.device?.id || '');
   const [token, setToken] = useState(saved?.token || '');
   const [name, setName] = useState(saved?.device?.name || '');
-  const [status, setStatus] = useState('setup'); // setup | connecting | online | error
+  const [status, setStatus] = useState('setup');      // setup | connecting | online | error
   const [err, setErr] = useState('');
   const [watchers, setWatchers] = useState(0);
 
+  // sources
+  const [cameras, setCameras] = useState([]);
+  const [mics, setMics] = useState([]);
+  const [sourceType, setSourceType] = useState('device'); // 'device' | 'ip'
+  const [cameraId, setCameraId] = useState('');
+  const [micId, setMicId] = useState('');
+  const [micOn, setMicOn] = useState(false);
+  const [ipUrl, setIpUrl] = useState('');
+
   const wsRef = useRef(null);
   const streamRef = useRef(null);
-  const pcsRef = useRef(new Map());   // viewerId -> RTCPeerConnection
+  const pcsRef = useRef(new Map());     // viewerId -> RTCPeerConnection
   const iceRef = useRef([{ urls: 'stun:stun.l.google.com:19302' }]);
   const localVideo = useRef(null);
+  const canvasRef = useRef(null);
+  const rafRef = useRef(null);
   const retry = useRef(1000);
   const stop = useRef(false);
 
-  // paste the whole config JSON to auto-fill
-  function onPaste(text) {
-    try {
-      const c = JSON.parse(text);
-      if (c.token) setToken(c.token);
-      if (c.device?.id) setId(c.device.id);
-      if (c.device?.name) setName(c.device.name);
-    } catch { /* not JSON — ignore, user can fill fields */ }
-  }
-
-  async function ensureCamera() {
-    if (streamRef.current) return streamRef.current;
-    const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
-    streamRef.current = s;
-    if (localVideo.current) localVideo.current.srcObject = s;
-    return s;
-  }
-
   function send(obj) { const ws = wsRef.current; if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj)); }
+
+  // ---- media sources ----------------------------------------------------
+  async function enumerate() {
+    try {
+      const devs = await navigator.mediaDevices.enumerateDevices();
+      const cams = devs.filter((d) => d.kind === 'videoinput');
+      const ms = devs.filter((d) => d.kind === 'audioinput');
+      setCameras(cams); setMics(ms);
+      setCameraId((prev) => prev || (cams[0] && cams[0].deviceId) || '');
+      setMicId((prev) => prev || (ms[0] && ms[0].deviceId) || '');
+    } catch (e) { setErr('could not list devices: ' + e.message); }
+  }
+
+  function stopStream() {
+    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+    if (streamRef.current) { streamRef.current.getTracks().forEach((t) => t.stop()); streamRef.current = null; }
+  }
+
+  // Build the outgoing MediaStream from the current selections.
+  async function acquireStream() {
+    stopStream();
+    let stream;
+    if (sourceType === 'ip') {
+      if (!ipUrl.trim()) throw new Error('enter the IP camera stream URL');
+      const canvas = canvasRef.current || Object.assign(document.createElement('canvas'), { width: 1280, height: 720 });
+      canvasRef.current = canvas;
+      const ctx = canvas.getContext('2d');
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.src = ipUrl.trim();
+      await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error('cannot load stream (CORS/format)')); setTimeout(res, 1500); });
+      const draw = () => { try { ctx.drawImage(img, 0, 0, canvas.width, canvas.height); } catch {} rafRef.current = requestAnimationFrame(draw); };
+      draw();
+      stream = canvas.captureStream(15); // may throw if the image is cross-origin-tainted
+      if (micOn) {
+        const a = await navigator.mediaDevices.getUserMedia({ audio: micId ? { deviceId: { exact: micId } } : true });
+        a.getAudioTracks().forEach((t) => stream.addTrack(t));
+      }
+    } else {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: cameraId ? { deviceId: { exact: cameraId } } : { facingMode: 'environment' },
+        audio: micOn ? (micId ? { deviceId: { exact: micId } } : true) : false,
+      });
+    }
+    streamRef.current = stream;
+    if (localVideo.current) localVideo.current.srcObject = stream;
+    return stream;
+  }
+
+  // Push the current stream to all connected watchers (replaceTrack where we can;
+  // addTrack otherwise, which triggers renegotiation via onnegotiationneeded).
+  function applyToPeers() {
+    const stream = streamRef.current;
+    const vTrack = stream && stream.getVideoTracks()[0];
+    const aTrack = stream && stream.getAudioTracks()[0];
+    for (const pc of pcsRef.current.values()) {
+      const vSender = pc.getSenders().find((s) => s.track && s.track.kind === 'video') || pc.getSenders().find((s) => !s.track);
+      const aSender = pc.getSenders().find((s) => s.track && s.track.kind === 'audio');
+      if (vTrack) { vSender ? vSender.replaceTrack(vTrack) : pc.addTrack(vTrack, stream); }
+      if (aTrack) { aSender ? aSender.replaceTrack(aTrack) : pc.addTrack(aTrack, stream); }
+      else if (aSender) { aSender.replaceTrack(null); }
+    }
+  }
+
+  async function changeSources() {
+    if (status !== 'online' && status !== 'connecting') return;
+    setErr('');
+    try { await acquireStream(); applyToPeers(); }
+    catch (e) { setErr(e.message); }
+  }
+
+  // ---- signaling / peers ------------------------------------------------
+  function makeOffer(pc, viewerId) {
+    pc.createOffer().then((o) => pc.setLocalDescription(o))
+      .then(() => send({ type: 'signal', to: viewerId, data: { kind: 'offer', sdp: pc.localDescription } }))
+      .catch((e) => setErr(e.message));
+  }
 
   async function onSignal(from, data) {
     let pc = pcsRef.current.get(from);
     try {
       if (data.kind === 'request') {
-        const stream = await ensureCamera();
+        const stream = streamRef.current || await acquireStream();
         pc = new RTCPeerConnection({ iceServers: iceRef.current });
         pcsRef.current.set(from, pc);
         setWatchers(pcsRef.current.size);
-        stream.getTracks().forEach((t) => pc.addTrack(t, stream));
         pc.onicecandidate = (ev) => { if (ev.candidate) send({ type: 'signal', to: from, data: { kind: 'ice', candidate: ev.candidate } }); };
+        pc.onnegotiationneeded = () => makeOffer(pc, from);
         pc.onconnectionstatechange = () => {
           if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) {
             try { pc.close(); } catch {}
             pcsRef.current.delete(from); setWatchers(pcsRef.current.size);
           }
         };
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        send({ type: 'signal', to: from, data: { kind: 'offer', sdp: pc.localDescription } });
+        stream.getTracks().forEach((t) => pc.addTrack(t, stream)); // fires onnegotiationneeded -> offer
       } else if (data.kind === 'answer' && pc) {
         await pc.setRemoteDescription(data.sdp);
       } else if (data.kind === 'ice' && pc && data.candidate) {
@@ -82,10 +151,7 @@ export default function Connect() {
     const url = cred.server || `${scheme}://${location.host}/agent`;
     const ws = new WebSocket(url);
     wsRef.current = ws;
-    ws.onopen = () => {
-      retry.current = 1000;
-      send({ type: 'hello', token: cred.token, device: cred.device, capabilities: [{ cap: 'camera' }] });
-    };
+    ws.onopen = () => { retry.current = 1000; send({ type: 'hello', token: cred.token, device: cred.device, capabilities: [{ cap: 'camera' }] }); };
     ws.onmessage = (ev) => {
       let msg; try { msg = JSON.parse(ev.data); } catch { return; }
       if (msg.type === 'hello-ok') setStatus('online');
@@ -102,21 +168,20 @@ export default function Connect() {
     ws.onerror = () => { try { ws.close(); } catch {} };
   }
 
+  function onPaste(text) {
+    try { const c = JSON.parse(text); if (c.token) setToken(c.token); if (c.device?.id) setId(c.device.id); if (c.device?.name) setName(c.device.name); } catch {}
+  }
+
   async function go(e) {
-    e.preventDefault();
-    setErr('');
+    e.preventDefault(); setErr('');
     if (!id.trim() || !token.trim()) { setErr('Enter the device id and access token.'); return; }
     const cred = { token: token.trim(), device: { id: id.trim(), name: name.trim() || id.trim(), platform: 'browser' } };
-    const savedServer = loadCred()?.server;
-    if (savedServer) cred.server = savedServer;
-    saveCred(cred);
-    setStatus('connecting');
-    try {
-      const r = await fetch('/api/ice'); if (r.ok) iceRef.current = (await r.json()).iceServers || iceRef.current;
-    } catch {}
-    try { await ensureCamera(); } catch (e2) { setErr('Camera permission needed: ' + e2.message); setStatus('error'); return; }
-    stop.current = false;
-    connect(cred);
+    const savedServer = loadCred()?.server; if (savedServer) cred.server = savedServer;
+    saveCred(cred); setStatus('connecting');
+    try { const r = await fetch('/api/ice'); if (r.ok) iceRef.current = (await r.json()).iceServers || iceRef.current; } catch {}
+    try { await acquireStream(); await enumerate(); }
+    catch (e2) { setErr('Camera/permission: ' + e2.message); setStatus('error'); return; }
+    stop.current = false; connect(cred);
   }
 
   function disconnect() {
@@ -124,35 +189,35 @@ export default function Connect() {
     try { wsRef.current?.close(); } catch {}
     for (const pc of pcsRef.current.values()) { try { pc.close(); } catch {} }
     pcsRef.current.clear(); setWatchers(0);
-    if (streamRef.current) { streamRef.current.getTracks().forEach((t) => t.stop()); streamRef.current = null; }
+    stopStream();
     setStatus('setup');
   }
 
-  useEffect(() => () => { stop.current = true; try { wsRef.current?.close(); } catch {} }, []);
+  useEffect(() => { navigator.mediaDevices?.addEventListener?.('devicechange', enumerate); return () => { stop.current = true; try { wsRef.current?.close(); } catch {} stopStream(); navigator.mediaDevices?.removeEventListener?.('devicechange', enumerate); }; }, []);
+
+  const liveView = status === 'online' || status === 'connecting';
 
   return (
     <>
       <Background />
-      <div className="login-wrap" style={{ minHeight: 'auto', paddingTop: 48 }}>
-        <section className="panel" style={{ width: 'min(460px, 100%)' }}>
+      <div className="login-wrap" style={{ minHeight: 'auto', paddingTop: 48, paddingBottom: 48 }}>
+        <section className="panel" style={{ width: 'min(480px, 100%)' }}>
           <div className="brand login-brand" style={{ textAlign: 'center' }}>
-            <span className="w-it">rem</span><span className="w-light">ote</span>
-            <span className="brand-sub">device</span>
+            <span className="w-it">rem</span><span className="w-light">ote</span><span className="brand-sub">device</span>
           </div>
           <div className="domain" style={{ textAlign: 'center', marginBottom: 18 }}>connect this device</div>
 
-          {status === 'setup' || status === 'error' ? (
+          {!liveView ? (
             <form onSubmit={go}>
               <label className="field"><span>Paste the device config (optional — fills the fields)</span>
-                <textarea rows={4} placeholder='{ "token": "…", "device": { "id": "…" } }'
-                  onChange={(e) => onPaste(e.target.value)}
+                <textarea rows={3} placeholder='{ "token": "…", "device": { "id": "…" } }' onChange={(e) => onPaste(e.target.value)}
                   style={{ width: '100%', background: 'var(--tile)', color: 'var(--ink)', border: '1px solid var(--navy-line)', borderRadius: 10, fontFamily: 'var(--font-mono)', fontSize: 12, padding: 10 }} />
               </label>
               <label className="field"><span>Device id</span>
                 <input type="text" value={id} autoCapitalize="none" autoCorrect="off" onChange={(e) => setId(e.target.value)} /></label>
               <label className="field"><span>Access token</span>
                 <input type="password" value={token} onChange={(e) => setToken(e.target.value)} /></label>
-              <button type="submit" style={{ width: '100%' }}>Connect & share camera</button>
+              <button type="submit" style={{ width: '100%' }}>Connect &amp; share</button>
               {err && <div className="login-err">{err}</div>}
             </form>
           ) : (
@@ -161,13 +226,49 @@ export default function Connect() {
                 <span className={`live-dot ${status === 'online' ? '' : 'off'}`} />
                 {status === 'online' ? `online${watchers ? ` · ${watchers} watching` : ''}` : 'connecting…'}
               </div>
-              <div className="cam-pane">
-                <video ref={localVideo} autoPlay playsInline muted />
-                <span className="cam-badge"><span className="live-dot" />this device</span>
+              <div className="cam-pane"><video ref={localVideo} autoPlay playsInline muted /><span className="cam-badge"><span className="live-dot" />this device</span></div>
+
+              {/* source controls */}
+              <div className="cap-block" style={{ marginTop: 0 }}>
+                <div className="cap-head">Video source</div>
+                <label className="field"><span>Type</span>
+                  <select value={sourceType} onChange={(e) => { setSourceType(e.target.value); }}>
+                    <option value="device">Camera (built-in / USB / USB-C / Bluetooth)</option>
+                    <option value="ip">IP camera (MJPEG URL — experimental)</option>
+                  </select></label>
+
+                {sourceType === 'device' ? (
+                  <label className="field"><span>Camera</span>
+                    <select value={cameraId} onChange={(e) => setCameraId(e.target.value)}>
+                      {cameras.length === 0 && <option value="">(no cameras found)</option>}
+                      {cameras.map((c, i) => <option key={c.deviceId} value={c.deviceId}>{c.label || `Camera ${i + 1}`}</option>)}
+                    </select></label>
+                ) : (
+                  <label className="field"><span>Stream URL (MJPEG, CORS-enabled)</span>
+                    <input type="text" placeholder="http://192.168.1.50/video.mjpg" value={ipUrl} onChange={(e) => setIpUrl(e.target.value)} /></label>
+                )}
+
+                <div className="cap-head" style={{ marginTop: 6 }}>Microphone</div>
+                <div className="ctl-row">
+                  <span className="ctl-label">Share audio</span>
+                  <label className="switch"><input type="checkbox" checked={micOn} onChange={(e) => setMicOn(e.target.checked)} /><span className="track" /><span className="knob" /></label>
+                </div>
+                {micOn && (
+                  <label className="field"><span>Microphone</span>
+                    <select value={micId} onChange={(e) => setMicId(e.target.value)}>
+                      {mics.length === 0 && <option value="">(default)</option>}
+                      {mics.map((m, i) => <option key={m.deviceId} value={m.deviceId}>{m.label || `Mic ${i + 1}`}</option>)}
+                    </select></label>
+                )}
+
+                <div className="action-btns" style={{ marginTop: 4 }}>
+                  <button className="secondary" onClick={changeSources}>Apply sources</button>
+                  <button className="secondary" onClick={enumerate}>Refresh list</button>
+                </div>
+                {sourceType === 'ip' && <p className="muted rem-sub" style={{ marginTop: 8 }}>
+                  RTSP IP cameras need a server-side gateway (planned). Only MJPEG/HTTP streams that send CORS headers work in-browser.</p>}
               </div>
-              <p className="muted rem-sub" style={{ textAlign: 'center', margin: 0 }}>
-                Keep this page open. Your camera streams to the dashboard on request.
-              </p>
+
               <button className="secondary" onClick={disconnect}>Disconnect</button>
               {err && <div className="ctl-note err" style={{ textAlign: 'center' }}>{err}</div>}
             </div>

@@ -31,6 +31,7 @@ export const api = {
 
   // device provisioning (list: any signed-in user; mutations: admin only)
   listDevices: () => req('GET', '/api/devices'),
+  revealDevice: (id) => req('GET', `/api/devices/${encodeURIComponent(id)}/config`),
   createDevice: (d) => req('POST', '/api/devices', d),
   updateDevice: (id, patch) => req('PUT', `/api/devices/${encodeURIComponent(id)}`, patch),
   rotateDevice: (id) => req('POST', `/api/devices/${encodeURIComponent(id)}/rotate`),

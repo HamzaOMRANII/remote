@@ -88,6 +88,13 @@ async function handle(req, res, pathname, { auth, users, devices, registry }) {
       catch (e) { return sendJson(res, 400, { error: e.message }); }
     }
 
+    // reveal the current token + config again (admin only)
+    const rev = pathname.match(/^\/api\/devices\/([^/]+)\/config$/);
+    if (rev && req.method === 'GET') {
+      try { return sendJson(res, 200, devices.reveal(decodeURIComponent(rev[1]))); }
+      catch (e) { return sendJson(res, 404, { error: e.message }); }
+    }
+
     const one = pathname.match(/^\/api\/devices\/([^/]+)$/);
     if (one) {
       const id = decodeURIComponent(one[1]);

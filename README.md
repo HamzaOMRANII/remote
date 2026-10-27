@@ -56,7 +56,9 @@ and the device appears on the dashboard; toggle its light / move its servo.
 Overridable by env: `PORT`, `HOST`, `REMOTE_PASSWORD`, `SESSION_SECRET`.
 
 Device credentials are **not** in config — they are provisioned at runtime from
-the back office and stored (scrypt-hashed) in `data/devices.json` (gitignored).
+the back office and stored in `data/devices.json` (gitignored). Tokens are kept
+retrievable (not one-way hashed) so an admin can re-reveal / re-send a device’s
+config any time; the file lives only on your box. Rotate to invalidate the old one.
 
 ## Deploy (later)
 

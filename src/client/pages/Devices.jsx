@@ -28,15 +28,15 @@ function AddDevice({ onCreated }) {
   return (
     <section className="panel form-card">
       <h2>New device access</h2>
-      <p className="muted rem-sub">Give it an id (used on the device) and a friendly name. You'll get a
-        one-time token + config to paste into the agent.</p>
+      <p className="muted rem-sub">Name the device. The id is derived from the name (or set your own).
+        You'll get a token + config to put on the device — revealable again any time.</p>
       <form onSubmit={submit}>
         <div className="row">
-          <label className="field"><span>Device id</span>
-            <input type="text" placeholder="hotel-laptop" autoCapitalize="none" autoCorrect="off"
+          <label className="field"><span>Device name</span>
+            <input type="text" placeholder="Device name" value={label} onChange={(e) => setLabel(e.target.value)} /></label>
+          <label className="field"><span>Device id <span className="muted">(optional)</span></span>
+            <input type="text" placeholder="auto from name" autoCapitalize="none" autoCorrect="off"
               value={id} onChange={(e) => setId(e.target.value)} /></label>
-          <label className="field"><span>Name</span>
-            <input type="text" placeholder="Hotel laptop" value={label} onChange={(e) => setLabel(e.target.value)} /></label>
         </div>
         <div className="save-row">
           <button type="submit" disabled={busy}>{busy ? 'Creating…' : 'Create access'}</button>
@@ -71,6 +71,7 @@ export default function Devices({ me }) {
   async function onToggle(d) { await api.updateDevice(d.id, { enabled: d.enabled === false }); load(); }
   async function onDelete(d) { await api.deleteDevice(d.id); load(); }
   async function onRotate(d) { const res = await api.rotateDevice(d.id); setReveal(res); load(); }
+  async function onReveal(d) { const res = await api.revealDevice(d.id); setReveal(res); }
 
   return (
     <>
@@ -104,7 +105,7 @@ export default function Devices({ me }) {
           <div className="srv-grid">
             {cards.map((d) => (
               <DeviceCard key={d.id} device={d} action={action} admin={admin}
-                onRename={onRename} onToggle={onToggle} onRotate={onRotate} onDelete={onDelete} />
+                onRename={onRename} onToggle={onToggle} onRotate={onRotate} onDelete={onDelete} onReveal={onReveal} />
             ))}
           </div>
         )}

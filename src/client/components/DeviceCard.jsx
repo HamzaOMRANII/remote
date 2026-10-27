@@ -4,7 +4,7 @@ import CapabilityControl from './CapabilityControl.jsx';
 // One card per provisioned device. Shows identity + online status; when online,
 // renders a control block per advertised capability. Admins get a manage row
 // (rename, enable/disable, rotate token, delete).
-export default function DeviceCard({ device, action, admin, onRename, onToggle, onRotate, onDelete }) {
+export default function DeviceCard({ device, action, admin, onRename, onToggle, onRotate, onDelete, onReveal }) {
   const [editing, setEditing] = useState(false);
   const [label, setLabel] = useState(device.label || device.name || device.id);
   const [confirmDel, setConfirmDel] = useState(false);
@@ -61,6 +61,8 @@ export default function DeviceCard({ device, action, admin, onRename, onToggle, 
             </div>
           ) : (
             <div className="action-btns">
+              <button className="secondary" disabled={busy === 'reveal'}
+                onClick={() => wrap('reveal', () => onReveal(device))}>Reveal config</button>
               <button className="secondary" onClick={() => setEditing(true)}>Rename</button>
               <button className="secondary" disabled={busy === 'toggle'}
                 onClick={() => wrap('toggle', () => onToggle(device))}>{device.enabled === false ? 'Enable' : 'Disable'}</button>

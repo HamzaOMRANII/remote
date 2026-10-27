@@ -4,6 +4,11 @@
     "port": 16010,
     "password": "change-me-to-a-strong-password",
     "sessionSecret": "change-me-to-a-long-random-string",
-    "adminUser": "admin"
+    "adminUser": "admin",
+    "turn": {
+      "host": "turn.omranisystems.com",
+      "secret": "coturn-static-auth-secret",
+      "ttlSeconds": 3600
+    }
   }
 }

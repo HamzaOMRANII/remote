@@ -3,7 +3,28 @@
 // JSON API: viewer auth (username + password) and admin-only user CRUD.
 // Realtime device traffic goes over the WebSocket (src/server/wss.js), not here.
 
+const crypto = require('node:crypto');
 const { sendJson, readJsonBody } = require('./http-util');
+
+// coturn REST-API time-limited credentials: username = "<unix-expiry>:<label>",
+// password = base64(HMAC-SHA1(static-auth-secret, username)). Short-lived, so
+// they're safe to hand out from the public /api/ice endpoint.
+function turnCredentials(turn) {
+  const ttl = turn.ttlSeconds || 3600;
+  const username = `${Math.floor(Date.now() / 1000) + ttl}:remote`;
+  const credential = crypto.createHmac('sha1', turn.secret).update(username).digest('base64');
+  const host = turn.host;
+  return {
+    username,
+    credential,
+    urls: [
+      `turn:${host}:3478?transport=udp`,
+      `turn:${host}:3478?transport=tcp`,
+      `turns:${host}:5349?transport=tcp`,
+    ],
+    stun: `stun:${host}:3478`,
+  };
+}
 
 async function handle(req, res, pathname, { auth, users, devices, registry, cfg }) {
   // GET /api/ice — WebRTC ICE servers (STUN always; TURN if configured in
@@ -11,8 +32,10 @@ async function handle(req, res, pathname, { auth, users, devices, registry, cfg 
   if (pathname === '/api/ice' && req.method === 'GET') {
     const iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
     const turn = cfg && cfg.server && cfg.server.turn;
-    if (turn && turn.urls) {
-      iceServers.push({ urls: turn.urls, username: turn.username, credential: turn.credential });
+    if (turn && turn.host && turn.secret) {
+      const t = turnCredentials(turn);
+      iceServers.unshift({ urls: t.stun });
+      iceServers.push({ urls: t.urls, username: t.username, credential: t.credential });
     }
     return sendJson(res, 200, { iceServers });
   }

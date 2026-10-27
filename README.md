@@ -28,10 +28,11 @@ Mono, glass cards, console frames).
 - ✅ Dashboard: device list + **GPIO control** (digital switch, PWM/servo slider).
 - ✅ **Camera (M2)**: browser agent at `/connect` — open it on a phone/laptop,
   paste the device access, grant camera, and it streams to the dashboard over
-  **WebRTC** (STUN now; TURN/coturn for hard NATs is the remaining M2 piece).
+  **WebRTC**, with **TURN (coturn)** for cross-network reliability — /api/ice
+  issues time-limited credentials against the existing turn.omranisystems.com.
 - ✅ **Browser agent**: no install for camera devices; the Python agent is only
   for GPIO/shell on a Pi.
-- ⏳ scripts/shell (M3), TURN relay, pairing + 2FA (M4), native mobile wrap (M5).
+- ⏳ scripts/shell (M3), pairing + 2FA (M4), native mobile wrap (M5), RTSP→WebRTC gateway for IP cameras.
 
 ## Run it locally
 

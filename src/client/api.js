@@ -28,4 +28,11 @@ export const api = {
   createUser: (u) => req('POST', '/api/users', u),
   updateUser: (id, patch) => req('PUT', `/api/users/${encodeURIComponent(id)}`, patch),
   deleteUser: (id) => req('DELETE', `/api/users/${encodeURIComponent(id)}`),
+
+  // device provisioning (list: any signed-in user; mutations: admin only)
+  listDevices: () => req('GET', '/api/devices'),
+  createDevice: (d) => req('POST', '/api/devices', d),
+  updateDevice: (id, patch) => req('PUT', `/api/devices/${encodeURIComponent(id)}`, patch),
+  rotateDevice: (id) => req('POST', `/api/devices/${encodeURIComponent(id)}/rotate`),
+  deleteDevice: (id) => req('DELETE', `/api/devices/${encodeURIComponent(id)}`),
 };

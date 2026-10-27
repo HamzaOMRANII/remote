@@ -21,7 +21,10 @@ Mono, glass cards, console frames).
 - ✅ Capability protocol ([`protocol/messages.js`](./protocol/messages.js)):
   `hello` / `action` / `result` / `stream`, device registry + request routing.
 - ✅ Two WebSocket paths: `/ws` (viewers, cookie-authed) and `/agent` (agents,
-  token-authed), with a 30 s heartbeat for Cloudflare.
+  **per-device token** authed), with a 30 s heartbeat for Cloudflare.
+- ✅ **Device provisioning**: admins create a device *access* (id + one-time
+  token) in the back office; the agent logs in with its own credential. List,
+  rename, enable/disable, rotate token, delete.
 - ✅ Dashboard: device list + **GPIO control** (digital switch, PWM/servo slider).
 - ⏳ Camera (M2), scripts/shell (M3), pairing + 2FA (M4), mobile agents (M5).
 
@@ -29,7 +32,7 @@ Mono, glass cards, console frames).
 
 ```bash
 npm install
-cp config.example.json config.json   # then set a password, sessionSecret, agentToken
+cp config.example.json config.json   # then set password, sessionSecret (admin seeds from these)
 npm run build                         # build the client into dist/
 npm start                             # server on http://127.0.0.1:16010
 ```
@@ -37,9 +40,9 @@ npm start                             # server on http://127.0.0.1:16010
 Dev (hot reload): `npm run dev` serves the client on `:16011` and proxies
 `/api`, `/ws`, `/agent` to the backend on `:16010` (run `npm start` too).
 
-Then start a device agent (see the `remote_agent` repo) pointed at
-`ws://127.0.0.1:16010/agent` with the matching `agentToken`. It appears on the
-dashboard; toggle its light / move its servo.
+Then, as admin, provision a device (Devices -> Add device) to get a one-time
+token + agent config. Put it in the `remote_agent` repo config, run the agent,
+and the device appears on the dashboard; toggle its light / move its servo.
 
 ## Config (`config.json`, gitignored)
 
@@ -48,9 +51,12 @@ dashboard; toggle its light / move its servo.
 | `server.port` / `server.host` | listen address (default `127.0.0.1:16010`) |
 | `server.password` | dashboard login password |
 | `server.sessionSecret` | HMAC secret for the session cookie |
-| `server.agentToken` | shared token every agent presents in its `hello` |
+| `server.adminUser` | username for the seeded admin (default `admin`) |
 
-Overridable by env: `PORT`, `HOST`, `REMOTE_PASSWORD`, `SESSION_SECRET`, `AGENT_TOKEN`.
+Overridable by env: `PORT`, `HOST`, `REMOTE_PASSWORD`, `SESSION_SECRET`.
+
+Device credentials are **not** in config — they are provisioned at runtime from
+the back office and stored (scrypt-hashed) in `data/devices.json` (gitignored).
 
 ## Deploy (later)
 
@@ -61,6 +67,7 @@ hardening (pairing, per-device keys, 2FA) — see `ARCHITECTURE.md` §6.
 
 ## Security note
 
-v1 is single-password + shared agent token, for self-use behind TLS. Treat raw
+v1 uses per-user accounts (admin/user) for the dashboard and per-device tokens
+for agents, all behind TLS. Treat raw
 shell as off-by-default and gated; prefer allow-listed scripts. The M4 milestone
 replaces the shared token with per-device keys and adds 2FA.

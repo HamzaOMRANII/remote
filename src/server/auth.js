@@ -50,7 +50,6 @@ function constantTimeEquals(a, b) {
 
 function create(cfg) {
   const secret = cfg.server.sessionSecret || 'insecure-dev-secret';
-  const agentToken = cfg.server.agentToken || '';
 
   return {
     // Returns the session payload { u: username, r: role } or null.
@@ -70,9 +69,6 @@ function create(cfg) {
     },
     clearCookie() {
       return `${COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`;
-    },
-    checkAgentToken(supplied) {
-      return !!agentToken && constantTimeEquals(supplied || '', agentToken);
     },
   };
 }

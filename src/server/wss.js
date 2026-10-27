@@ -16,7 +16,7 @@ const proto = require('../../protocol/messages');
 const HELLO_TIMEOUT_MS = 8000;
 const PING_INTERVAL_MS = 30000;
 
-function attach(server, { auth, registry }) {
+function attach(server, { auth, registry, devices }) {
   const wssViewer = new WebSocketServer({ noServer: true });
   const wssAgent = new WebSocketServer({ noServer: true });
 
@@ -83,17 +83,21 @@ function attach(server, { auth, registry }) {
       if (!msg) return;
 
       if (!ws.authed) {
-        if (msg.type !== proto.HELLO || !auth.checkAgentToken(msg.token)) {
-          try { ws.close(4003, 'auth failed'); } catch {}
+        if (msg.type !== proto.HELLO || !msg.device || !msg.device.id || !Array.isArray(msg.capabilities)) {
+          try { ws.close(4002, 'bad hello'); } catch {}
           return;
         }
-        if (!msg.device || !msg.device.id || !Array.isArray(msg.capabilities)) {
-          try { ws.close(4002, 'bad hello'); } catch {}
+        // per-device credential: the id + token must match a provisioned, enabled device
+        if (!devices.verifyToken(msg.device.id, msg.token)) {
+          try { ws.close(4003, 'auth failed'); } catch {}
           return;
         }
         ws.authed = true;
         clearTimeout(helloTimer);
-        registry.addAgent(ws, msg.device, msg.capabilities);
+        devices.touch(msg.device.id);
+        const prov = devices.get(msg.device.id);
+        const device = { ...msg.device, name: (prov && prov.label) || msg.device.name || msg.device.id };
+        registry.addAgent(ws, device, msg.capabilities);
         ws.send(JSON.stringify({ type: proto.HELLO_OK }));
         return;
       }

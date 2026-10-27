@@ -20,6 +20,7 @@ const path = require('node:path');
 const { load, ROOT } = require('./server/config');
 const authFactory = require('./server/auth');
 const usersFactory = require('./server/users');
+const devicesFactory = require('./server/devices');
 const api = require('./server/api');
 const { createRegistry } = require('./server/registry');
 const { attach } = require('./server/wss');
@@ -27,6 +28,7 @@ const { sendText } = require('./server/http-util');
 
 const cfg = load();
 const users = usersFactory.create(cfg, ROOT);
+const devices = devicesFactory.create(cfg, ROOT);
 const auth = authFactory.create(cfg);
 const registry = createRegistry();
 
@@ -80,7 +82,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname.startsWith('/api/')) {
     try {
-      await api.handle(req, res, pathname, { auth, users, cfg });
+      await api.handle(req, res, pathname, { auth, users, devices, registry, cfg });
     } catch (err) {
       console.error('[remote] api error:', err.message);
       if (!res.headersSent) sendText(res, 500, 'Internal error');
@@ -113,15 +115,12 @@ const server = http.createServer(async (req, res) => {
   serveFile(req, res, target);
 });
 
-attach(server, { auth, registry });
+attach(server, { auth, registry, devices });
 
 server.listen(PORT, HOST, () => {
   console.log(`[remote] listening on http://${HOST}:${PORT}  (ws: /ws, agents: /agent)`);
   if (!cfg.server.password || cfg.server.password.startsWith('change-me')) {
-    console.warn('[remote] WARNING: default/empty password — set a real one before exposing.');
-  }
-  if (!cfg.server.agentToken || cfg.server.agentToken.startsWith('change-me')) {
-    console.warn('[remote] WARNING: default/empty agent token — set a real one before exposing.');
+    console.warn('[remote] WARNING: default/empty admin password — set a real one before exposing.');
   }
 });
 

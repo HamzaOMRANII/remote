@@ -1,10 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import Background from '../components/Background.jsx';
+import { api } from '../api.js';
 
 // Browser agent — the page you open ON the device. Paste the access, choose the
 // camera + microphone, grant permission, and it streams to the dashboard over
 // WebRTC. No install, no command line. Works while the page is open (iOS:
 // foreground only).
+//
+// Pairing: scanning the dashboard's QR opens /connect#pair=CODE; the code is
+// claimed once for this device's credentials (the fragment never reaches the
+// server logs). A code can also be typed in.
 //
 // Built-in / USB / USB-C / Bluetooth cameras all appear as selectable video
 // inputs. IP cameras (RTSP) can't be captured by a browser directly — they need
@@ -22,6 +27,9 @@ export default function Connect() {
   const [status, setStatus] = useState('setup');      // setup | connecting | online | error
   const [err, setErr] = useState('');
   const [watchers, setWatchers] = useState(0);
+  const [pairCode, setPairCode] = useState('');
+  const [paired, setPaired] = useState('');
+  const [showManual, setShowManual] = useState(false);
 
   // sources
   const [cameras, setCameras] = useState([]);
@@ -168,6 +176,26 @@ export default function Connect() {
     ws.onerror = () => { try { ws.close(); } catch {} };
   }
 
+  async function claim(code) {
+    setErr('');
+    try {
+      const r = await api.claimPairing(code);
+      const cred = { server: r.server, token: r.token, device: { id: r.device.id, name: r.device.name, platform: 'browser' } };
+      saveCred(cred);
+      setId(r.device.id); setToken(r.token); setName(r.device.name || r.device.id);
+      setPaired(r.device.name || r.device.id); setPairCode('');
+    } catch (e) { setErr(e.message); }
+  }
+
+  // QR link: /connect#pair=CODE -> claim once, then drop the code from the URL
+  useEffect(() => {
+    const m = location.hash.match(/pair=([A-Za-z0-9-]+)/);
+    if (!m) return;
+    history.replaceState(null, '', location.pathname);
+    claim(m[1]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function onPaste(text) {
     try { const c = JSON.parse(text); if (c.token) setToken(c.token); if (c.device?.id) setId(c.device.id); if (c.device?.name) setName(c.device.name); } catch {}
   }
@@ -209,6 +237,22 @@ export default function Connect() {
 
           {!liveView ? (
             <form onSubmit={go}>
+              {paired ? (
+                <p className="rem-sub" style={{ textAlign: 'center' }}><span className="live-dot" /> Paired as <b>{paired}</b>. Tap below to start sharing.</p>
+              ) : !(id && token) && (
+                <>
+                  <label className="field"><span>Pairing code (from the dashboard → Pair)</span>
+                    <input type="text" placeholder="ABCD-EFGH" autoCapitalize="characters" autoCorrect="off" className="code-input"
+                      value={pairCode} onChange={(e) => setPairCode(e.target.value)} /></label>
+                  <button type="button" style={{ width: '100%', marginBottom: 14 }} disabled={!pairCode.trim()}
+                    onClick={() => claim(pairCode)}>Pair this device</button>
+                </>
+              )}
+              {(id && token) || showManual ? null : (
+                <button type="button" className="secondary" style={{ width: '100%', marginBottom: 14 }}
+                  onClick={() => setShowManual(true)}>Use a token instead</button>
+              )}
+              {(((id && token) && !paired) || showManual) && <>
               <label className="field"><span>Paste the device config (optional — fills the fields)</span>
                 <textarea rows={3} placeholder='{ "token": "…", "device": { "id": "…" } }' onChange={(e) => onPaste(e.target.value)}
                   style={{ width: '100%', background: 'var(--tile)', color: 'var(--ink)', border: '1px solid var(--navy-line)', borderRadius: 10, fontFamily: 'var(--font-mono)', fontSize: 12, padding: 10 }} />
@@ -217,7 +261,8 @@ export default function Connect() {
                 <input type="text" value={id} autoCapitalize="none" autoCorrect="off" onChange={(e) => setId(e.target.value)} /></label>
               <label className="field"><span>Access token</span>
                 <input type="password" value={token} onChange={(e) => setToken(e.target.value)} /></label>
-              <button type="submit" style={{ width: '100%' }}>Connect &amp; share</button>
+              </>}
+              {((id && token) || showManual) && <button type="submit" style={{ width: '100%' }}>Connect &amp; share</button>}
               {err && <div className="login-err">{err}</div>}
             </form>
           ) : (

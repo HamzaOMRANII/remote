@@ -11,12 +11,25 @@
 // owner's box. Rotating a token invalidates the old one.
 //
 // Capabilities are advertised by the agent at connect time, not stored here.
+//
+// Pairing (M4): instead of copying the token around, the admin opens a short
+// one-time pairing code (shown as a QR) for a device. The device claims it
+// once over HTTPS and receives its credentials. Codes live in memory only,
+// expire after 10 minutes, and one device has at most one open code.
 
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
 const ID_RE = /^[a-z0-9][a-z0-9-]{1,39}$/;
+const PAIR_TTL_MS = 10 * 60 * 1000;
+const PAIR_ABC = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I
+
+function newPairCode() {
+  const s = Array.from(crypto.randomBytes(8), (x) => PAIR_ABC[x % PAIR_ABC.length]).join('');
+  return `${s.slice(0, 4)}-${s.slice(4)}`;
+}
+const normPair = (c) => String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 
 function newToken() { return crypto.randomBytes(24).toString('hex'); }
 
@@ -44,6 +57,7 @@ function create(cfg, root) {
   const dir = path.join(root, 'data');
   const file = path.join(dir, 'devices.json');
   let devices = [];
+  const pairings = new Map(); // normalized code -> { id, expiresAt }
 
   function save() { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file, JSON.stringify(devices, null, 2) + '\n'); }
   function load() {
@@ -103,8 +117,35 @@ function create(cfg, root) {
       return { device: publicDevice(d), token: d.token };
     },
 
+    // ---- pairing ----
+    pair(id) {
+      const d = this.get(id);
+      if (!d) throw new Error('device not found');
+      if (!d.enabled) throw new Error('enable the device before pairing');
+      for (const [k, p] of pairings) if (p.id === id) pairings.delete(k);
+      const code = newPairCode();
+      const expiresAt = Date.now() + PAIR_TTL_MS;
+      pairings.set(normPair(code), { id, expiresAt });
+      return { device: publicDevice(d), code, expiresAt };
+    },
+    // One-time: returns { device, token } and burns the code, or null.
+    claimPairing(code) {
+      const key = normPair(code);
+      const p = pairings.get(key);
+      if (!p) return null;
+      pairings.delete(key);
+      const d = this.get(p.id);
+      if (!d || !d.enabled || Date.now() > p.expiresAt) return null;
+      return { device: publicDevice(d), token: d.token };
+    },
+    cancelPairing(id) {
+      for (const [k, p] of pairings) if (p.id === id) pairings.delete(k);
+      return { ok: true };
+    },
+
     remove(id) {
       if (!this.get(id)) throw new Error('device not found');
+      this.cancelPairing(id);
       devices = devices.filter((d) => d.id !== id); save();
       return { ok: true };
     },

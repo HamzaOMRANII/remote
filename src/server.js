@@ -29,7 +29,7 @@ const { sendText } = require('./server/http-util');
 const cfg = load();
 const users = usersFactory.create(cfg, ROOT);
 const devices = devicesFactory.create(cfg, ROOT);
-const auth = authFactory.create(cfg);
+const auth = authFactory.create(cfg, users);
 const registry = createRegistry();
 
 const PORT = cfg.server.port || 16010;

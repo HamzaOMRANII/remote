@@ -5,6 +5,7 @@ import Login from './pages/Login.jsx';
 import Devices from './pages/Devices.jsx';
 import Users from './pages/Users.jsx';
 import Connect from './pages/Connect.jsx';
+import Account from './pages/Account.jsx';
 import Background from './components/Background.jsx';
 
 export default function App() {
@@ -15,7 +16,7 @@ export default function App() {
   useEffect(() => {
     if (path === '/login' || path === '/connect') return;
     api.me()
-      .then((d) => setMe({ username: d.username, role: d.role }))
+      .then((d) => setMe({ username: d.username, role: d.role, twoFactor: d.twoFactor }))
       .catch(() => { setMe(null); go('/login')(); });
   }, [path]);
 
@@ -28,5 +29,6 @@ export default function App() {
     if (me.role !== 'admin') { go('/')(); return <Background />; }
     return <Users me={me} />;
   }
+  if (path === '/account') return <Account me={me} />;
   return <Devices me={me} />;
 }

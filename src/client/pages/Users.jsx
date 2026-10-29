@@ -70,6 +70,13 @@ function Row({ user, me, onChanged }) {
     finally { setBusy(false); }
   }
 
+  async function resetTwoFactor() {
+    setBusy(true); setErr('');
+    try { await api.updateUser(user.id, { resetTwoFactor: true }); setEditing(false); onChanged(); }
+    catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  }
+
   async function del() {
     setBusy(true); setErr('');
     try { await api.deleteUser(user.id); onChanged(); }
@@ -87,6 +94,7 @@ function Row({ user, me, onChanged }) {
                 <option value="user">user</option><option value="admin">admin</option></select>
             : <span className={`status ${user.role === 'admin' ? 'status-live' : ''}`}>{user.role}</span>}
         </td>
+        <td><span className={`status ${user.twoFactor ? 'status-live' : 'status-planned'}`}>{user.twoFactor ? 'on' : 'off'}</span></td>
         <td className="mono">{fmtDate(user.createdAt)}</td>
         <td className="num">
           {editing ? (
@@ -109,15 +117,21 @@ function Row({ user, me, onChanged }) {
       </tr>
       {editing && (
         <tr>
-          <td colSpan={4}>
-            <label className="field" style={{ margin: 0, maxWidth: 320 }}>
-              <span>Reset password (leave blank to keep)</span>
-              <input type="password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="New password" />
-            </label>
+          <td colSpan={5}>
+            <div style={{ display: 'flex', gap: 16, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <label className="field" style={{ margin: 0, maxWidth: 320, flex: 1 }}>
+                <span>Reset password (leave blank to keep)</span>
+                <input type="password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="New password" />
+              </label>
+              {user.twoFactor && !isSelf && (
+                <button className="secondary" disabled={busy} onClick={resetTwoFactor}
+                  title="For a user who lost their phone and recovery codes">Reset 2FA</button>
+              )}
+            </div>
           </td>
         </tr>
       )}
-      {err && <tr><td colSpan={4}><span className="login-err" style={{ minHeight: 0 }}>{err}</span></td></tr>}
+      {err && <tr><td colSpan={5}><span className="login-err" style={{ minHeight: 0 }}>{err}</span></td></tr>}
     </>
   );
 }
@@ -150,7 +164,7 @@ export default function Users({ me }) {
           {err && <p className="login-err" style={{ minHeight: 0 }}>{err}</p>}
           {!users ? <p className="muted">Loading…</p> : (
             <table className="t">
-              <thead><tr><th>Username</th><th>Role</th><th>Created</th><th className="num">Actions</th></tr></thead>
+              <thead><tr><th>Username</th><th>Role</th><th>2FA</th><th>Created</th><th className="num">Actions</th></tr></thead>
               <tbody>
                 {users.map((u) => <Row key={u.id} user={u} me={me} onChanged={load} />)}
               </tbody>

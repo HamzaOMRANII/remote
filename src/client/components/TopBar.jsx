@@ -28,7 +28,12 @@ export default function TopBar({ me, connected }) {
             <span className={`live-dot ${connected ? '' : 'off'}`} />{connected ? 'live' : 'offline'}
           </span>
         )}
-        {me && <span className="brand-sub" title={`Signed in as ${me.username}`}>{me.username}</span>}
+        {me && (
+          <a href="/account" className={path === '/account' ? 'active' : ''} onClick={go('/account')}
+            title={`Signed in as ${me.username}${me.twoFactor ? '' : ' — 2FA is off'}`}>
+            {me.username}{me.twoFactor === false && <span className="nav-warn" aria-label="2FA off">!</span>}
+          </a>
+        )}
         <a href="/login" onClick={signOut}>Sign out</a>
       </nav>
     </header>

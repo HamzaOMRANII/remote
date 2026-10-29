@@ -3,18 +3,21 @@
 // WebSocket layer: two upgrade paths on the same http server.
 //
 //   /ws     viewers  — authenticated by the session cookie at upgrade time
-//   /agent  agents   — accept the socket, then require a valid HELLO (with the
-//                      shared agent token) as the first message within a short
-//                      window, or close. (Per-device keys replace this in M4.)
+//   /agent  agents   — accept the socket, then require a valid HELLO (device
+//                      id + its own token) as the first message within a short
+//                      window, or close. An IP that keeps failing is refused at
+//                      the upgrade for a while (rate limit).
 //
 // A 30s heartbeat ping keeps connections alive through Cloudflare's ~100s idle
 // cutoff and reaps dead sockets.
 
 const { WebSocketServer } = require('ws');
 const proto = require('../../protocol/messages');
+const { createLimiter, clientIp } = require('./ratelimit');
 
 const HELLO_TIMEOUT_MS = 8000;
 const PING_INTERVAL_MS = 30000;
+const agentFails = createLimiter({ max: 20, windowMs: 10 * 60 * 1000 });
 
 function attach(server, { auth, registry, devices }) {
   const wssViewer = new WebSocketServer({ noServer: true });
@@ -40,6 +43,11 @@ function attach(server, { auth, registry, devices }) {
     }
 
     if (pathname === '/agent') {
+      if (!agentFails.check(clientIp(req)).ok) {
+        socket.write('HTTP/1.1 429 Too Many Requests\r\n\r\n');
+        socket.destroy();
+        return;
+      }
       wssAgent.handleUpgrade(req, socket, head, (ws) => wssAgent.emit('connection', ws, req));
       return;
     }
@@ -77,7 +85,8 @@ function attach(server, { auth, registry, devices }) {
   });
 
   // ---- agents ----
-  wssAgent.on('connection', (ws) => {
+  wssAgent.on('connection', (ws, req) => {
+    const ip = clientIp(req);
     ws.isAlive = true;
     ws.authed = false;
     ws.on('pong', () => { ws.isAlive = true; });
@@ -99,10 +108,13 @@ function attach(server, { auth, registry, devices }) {
         }
         // per-device credential: the id + token must match a provisioned, enabled device
         if (!devices.verifyToken(msg.device.id, msg.token)) {
+          agentFails.fail(ip);
+          console.log(`[auth] agent hello failed device=${JSON.stringify(String(msg.device.id).slice(0, 40))} ip=${ip}`);
           try { ws.close(4003, 'auth failed'); } catch {}
           return;
         }
         ws.authed = true;
+        agentFails.reset(ip);
         clearTimeout(helloTimer);
         devices.touch(msg.device.id);
         const prov = devices.get(msg.device.id);

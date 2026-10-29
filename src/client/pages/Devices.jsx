@@ -3,6 +3,7 @@ import Background from '../components/Background.jsx';
 import TopBar from '../components/TopBar.jsx';
 import DeviceCard from '../components/DeviceCard.jsx';
 import AccessSnippet from '../components/AccessSnippet.jsx';
+import PairPanel from '../components/PairPanel.jsx';
 import { api } from '../api.js';
 import { useRemote } from '../ws.js';
 
@@ -29,7 +30,7 @@ function AddDevice({ onCreated }) {
     <section className="panel form-card">
       <h2>New device access</h2>
       <p className="muted rem-sub">Name the device. The id is derived from the name (or set your own).
-        You'll get a token + config to put on the device — revealable again any time.</p>
+        Next you get a one-time pairing QR to scan on the device (the raw token + config stay available under Reveal config).</p>
       <form onSubmit={submit}>
         <div className="row">
           <label className="field"><span>Device name</span>
@@ -52,6 +53,7 @@ export default function Devices({ me }) {
   const { connected, devices: live, action, runStream, sendAction, sendSignal, onSignal } = useRemote();
   const [provisioned, setProvisioned] = useState(null);
   const [reveal, setReveal] = useState(null); // { device, token } shown once
+  const [pairing, setPairing] = useState(null); // { device, code, expiresAt }
   const [err, setErr] = useState('');
   const admin = me && me.role === 'admin';
 
@@ -72,6 +74,14 @@ export default function Devices({ me }) {
   async function onDelete(d) { await api.deleteDevice(d.id); load(); }
   async function onRotate(d) { const res = await api.rotateDevice(d.id); setReveal(res); load(); }
   async function onReveal(d) { const res = await api.revealDevice(d.id); setReveal(res); }
+  async function onPair(d) {
+    try { setReveal(null); setPairing(await api.pairDevice(d.id)); window.scrollTo(0, 0); }
+    catch (e) { setErr(e.message); }
+  }
+  function closePairing() {
+    if (pairing && !liveById[pairing.device.id]) api.cancelPairing(pairing.device.id).catch(() => {});
+    setPairing(null);
+  }
 
   return (
     <>
@@ -85,10 +95,12 @@ export default function Devices({ me }) {
             </h1>
             <p className="rem-sub" style={{ marginTop: 6 }}>Provision an access, log in from the device, control it here.</p>
           </div>
-          {admin && <AddDevice onCreated={(res) => { setReveal(res); load(); }} />}
+          {admin && <AddDevice onCreated={(res) => { load(); onPair(res.device); }} />}
         </div>
 
         {err && <p className="login-err" style={{ minHeight: 0 }}>{err}</p>}
+        {pairing && <PairPanel pairing={pairing} online={!!liveById[pairing.device.id]}
+          onNew={() => onPair(pairing.device)} onClose={closePairing} />}
         {reveal && <AccessSnippet device={reveal.device} token={reveal.token} onDone={() => setReveal(null)} />}
 
         {provisioned === null ? (
@@ -106,7 +118,7 @@ export default function Devices({ me }) {
             {cards.map((d) => (
               <DeviceCard key={d.id} device={d} action={action} runStream={runStream} sendAction={sendAction}
                 sendSignal={sendSignal} onSignal={onSignal} admin={admin}
-                onRename={onRename} onToggle={onToggle} onRotate={onRotate} onDelete={onDelete} onReveal={onReveal} />
+                onPair={onPair} onRename={onRename} onToggle={onToggle} onRotate={onRotate} onDelete={onDelete} onReveal={onReveal} />
             ))}
           </div>
         )}

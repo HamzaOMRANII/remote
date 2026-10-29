@@ -339,3 +339,16 @@ select{
 }
 select:focus{ outline: 2px solid var(--petrol-bright); outline-offset: 1px; border-color: transparent; }
 .field select{ width: 100%; }
+
+/* ---------- M4: 2FA + pairing ---------- */
+.code-input{ font-family: var(--font-mono); font-size: 20px; letter-spacing: 0.18em; text-align: center; }
+.totp-setup{ display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
+.qr{ display: block; border-radius: 12px; max-width: 100%; height: auto; }
+.qr-expired{ opacity: 0.25; filter: grayscale(1); }
+.secret-key{ display: inline-block; font-family: var(--font-mono); font-size: 14px; color: var(--petrol-bright);
+  background: var(--tile); border: 1px solid var(--navy-line); border-radius: 8px; padding: 6px 10px; word-break: break-all; }
+.pair-code{ font-size: 30px; letter-spacing: 0.12em; color: #fff; margin: 6px 0 0; }
+.recovery-grid{ columns: 2; column-gap: 32px; font-size: 14px !important; color: var(--ink) !important; }
+.nav-warn{ display: inline-grid; place-items: center; width: 16px; height: 16px; margin-left: 6px; border-radius: 50%;
+  background: var(--warn); color: var(--navy-950); font-size: 11px; font-weight: 700; vertical-align: 1px; }
+@media (max-width: 520px){ .pair-code{ font-size: 24px; } .recovery-grid{ columns: 1; } }

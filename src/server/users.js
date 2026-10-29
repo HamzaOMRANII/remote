@@ -7,6 +7,11 @@
 //
 // Roles: "admin" (manage users + control devices) and "user" (control devices
 // only). The last remaining admin cannot be deleted or demoted.
+//
+// 2FA (M4): optional per-user TOTP. Setup stores a pending secret until the
+// user proves it with a code; enabling issues 10 one-time recovery codes
+// (stored as sha256 — they are 50-bit random, so a fast hash is enough).
+// The last accepted TOTP step is remembered so a code can't be replayed.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -14,6 +19,20 @@ const crypto = require('node:crypto');
 
 const ROLES = ['admin', 'user'];
 const SCRYPT_KEYLEN = 64;
+const totp = require('./totp');
+
+const sha256 = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
+const normRecovery = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+function newRecoveryCodes(n = 10) {
+  // xxxxx-xxxxx from an unambiguous alphabet
+  const abc = 'abcdefghjkmnpqrstuvwxyz23456789';
+  return Array.from({ length: n }, () => {
+    const b = crypto.randomBytes(10);
+    const s = Array.from(b, (x) => abc[x % abc.length]).join('');
+    return `${s.slice(0, 5)}-${s.slice(5)}`;
+  });
+}
 
 function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   const hash = crypto.scryptSync(String(password), salt, SCRYPT_KEYLEN).toString('hex');
@@ -27,7 +46,10 @@ function verifyPassword(password, salt, hash) {
 }
 
 function publicUser(u) {
-  return { id: u.id, username: u.username, role: u.role, createdAt: u.createdAt, updatedAt: u.updatedAt };
+  return {
+    id: u.id, username: u.username, role: u.role, createdAt: u.createdAt, updatedAt: u.updatedAt,
+    twoFactor: !!u.totpEnabled, recoveryLeft: u.totpEnabled ? (u.recovery || []).length : 0,
+  };
 }
 
 function create(cfg, root) {
@@ -72,6 +94,9 @@ function create(cfg, root) {
     list() {
       return users.map(publicUser);
     },
+    getById(id) {
+      return users.find((u) => u.id === id);
+    },
     getByUsername(username) {
       return users.find((u) => u.username.toLowerCase() === String(username || '').toLowerCase());
     },
@@ -95,6 +120,73 @@ function create(cfg, root) {
       users.push(u); save();
       return publicUser(u);
     },
+    // ---- 2FA ----
+    hasTwoFactor(username) {
+      const u = this.getByUsername(username);
+      return !!(u && u.totpEnabled);
+    },
+    // Accepts a current TOTP code (not replayed) or an unused recovery code.
+    // Returns 'totp' | 'recovery' | null.
+    verifySecondFactor(username, code) {
+      const u = this.getByUsername(username);
+      if (!u || !u.totpEnabled) return null;
+      const step = totp.verify(u.totpSecret, code);
+      if (step !== null && step > (u.totpLastStep || 0)) {
+        u.totpLastStep = step; save();
+        return 'totp';
+      }
+      const h = sha256(normRecovery(code));
+      const list = u.recovery || [];
+      if (normRecovery(code).length === 10 && list.includes(h)) {
+        u.recovery = list.filter((x) => x !== h); u.updatedAt = Date.now(); save();
+        return 'recovery';
+      }
+      return null;
+    },
+    beginTwoFactor(id) {
+      const u = this.getById(id);
+      if (!u) throw new Error('user not found');
+      u.totpPending = totp.generateSecret(); save();
+      return { secret: u.totpPending, uri: totp.otpauthUri(u.totpPending, u.username) };
+    },
+    enableTwoFactor(id, code) {
+      const u = this.getById(id);
+      if (!u) throw new Error('user not found');
+      if (!u.totpPending) throw new Error('start the setup again');
+      const step = totp.verify(u.totpPending, code);
+      if (step === null) throw new Error('that code did not match — check the time on your phone and try again');
+      const codes = newRecoveryCodes();
+      Object.assign(u, {
+        totpSecret: u.totpPending, totpEnabled: true, totpLastStep: step,
+        recovery: codes.map((c) => sha256(normRecovery(c))), updatedAt: Date.now(),
+      });
+      delete u.totpPending; save();
+      return codes;
+    },
+    regenerateRecovery(id) {
+      const u = this.getById(id);
+      if (!u || !u.totpEnabled) throw new Error('2FA is not enabled');
+      const codes = newRecoveryCodes();
+      u.recovery = codes.map((c) => sha256(normRecovery(c))); u.updatedAt = Date.now(); save();
+      return codes;
+    },
+    disableTwoFactor(id) {
+      const u = this.getById(id);
+      if (!u) throw new Error('user not found');
+      for (const k of ['totpSecret', 'totpEnabled', 'totpLastStep', 'totpPending', 'recovery']) delete u[k];
+      u.updatedAt = Date.now(); save();
+      return publicUser(u);
+    },
+
+    changePassword(id, current, next) {
+      const u = this.getById(id);
+      if (!u) throw new Error('user not found');
+      if (!verifyPassword(current || '', u.salt, u.hash)) throw new Error('current password is incorrect');
+      if (String(next || '').length < 10) throw new Error('new password must be at least 10 characters');
+      Object.assign(u, hashPassword(next)); u.updatedAt = Date.now(); save();
+      return publicUser(u);
+    },
+
     update(id, { password, role, username }) {
       const u = users.find((x) => x.id === id);
       if (!u) throw new Error('user not found');

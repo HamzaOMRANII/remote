@@ -262,7 +262,10 @@ https://claude.ai/artifact/JXwsnCcobFmRzHGix8mra2
 - **M3 — Shell & scripts.** Allowlisted scripts first (with `Unlock` gate +
   audit); interactive terminal as per-device opt-in.
 - **M4 — Multi-device & auth hardening.** Pairing, per-device keys/revocation,
-  2FA, rate limiting, device registry UI.
+  2FA, rate limiting, device registry UI. *Built 2026-10-29:* TOTP 2FA +
+  recovery codes (`/account`), one-time QR pairing (`/connect#pair=CODE`,
+  agent `--pair CODE`), failure rate limits (login, 2FA, pairing, agent hello),
+  sessions bound to the password hash.
 - **M5 — Mobile agents.** Android APK (background camera, sideload + self-update);
   iPhone via 3uTools (foreground-only, documented).
 - **M6 — Polish & run.** PWA install, reconnection, systemd/pm2 autostart,
@@ -282,5 +285,7 @@ https://claude.ai/artifact/JXwsnCcobFmRzHGix8mra2
 
 ## 10. Change log
 
+- **2026-10-29** — M4 auth hardening built (2FA, QR pairing, rate limits,
+  password-bound sessions, self-service password change).
 - **2026-10-27** — v0.1 architecture draft created. Design system confirmed as
   inherited from `server_monitoring`. Awaiting go-ahead to build.

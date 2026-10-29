@@ -5,27 +5,33 @@ import '@xterm/xterm/css/xterm.css';
 import { api } from '../api.js';
 
 // `shell` capability: an admin-only interactive terminal. Gated behind a
-// password re-prompt; then opens a pty session on the device (xterm.js <-> pty).
+// password re-prompt (plus a 2FA code when the user has 2FA); then opens a pty
+// session on the device (xterm.js <-> pty).
 
 function Gate({ onOk }) {
   const [pw, setPw] = useState('');
+  const [code, setCode] = useState('');
+  const [needCode, setNeedCode] = useState(false);
+  useEffect(() => { api.me().then((d) => setNeedCode(!!d.twoFactor)).catch(() => {}); }, []);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   async function submit(e) {
     e.preventDefault(); setBusy(true); setErr('');
-    try { await api.verifyPassword(pw); onOk(); }
-    catch { setErr('Incorrect password.'); }
+    try { await api.verifyPassword(pw, code); onOk(); }
+    catch (e2) { setErr(e2.message); }
     finally { setBusy(false); }
   }
   return (
     <div className="cap-block">
       <div className="cap-head">Shell</div>
       <p className="muted rem-sub" style={{ marginBottom: 10 }}>
-        Opens a real shell on the device. Re-enter your password to continue — every command is logged.
+        Opens a real shell on the device. Re-enter your password{needCode ? ' and a 2FA code' : ''} to continue — every command is logged.
       </p>
       <form onSubmit={submit} style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
         <input type="password" placeholder="Your password" value={pw} onChange={(e) => setPw(e.target.value)}
           style={{ maxWidth: 220 }} />
+        {needCode && <input type="text" inputMode="numeric" autoComplete="one-time-code" placeholder="2FA code"
+          value={code} onChange={(e) => setCode(e.target.value)} style={{ maxWidth: 130 }} />}
         <button type="submit" disabled={busy}>{busy ? 'Unlocking…' : 'Unlock shell'}</button>
         {err && <span className="login-err" style={{ minHeight: 0 }}>{err}</span>}
       </form>

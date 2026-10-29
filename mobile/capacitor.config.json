@@ -1,0 +1,13 @@
+{
+  "appId": "com.omranisystems.remoteagent",
+  "appName": "Remote Agent",
+  "webDir": "www",
+  "backgroundColor": "#050B14",
+  "server": {
+    "url": "https://remote.omranisystems.com/connect",
+    "allowNavigation": ["remote.omranisystems.com"]
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}

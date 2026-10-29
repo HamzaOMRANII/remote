@@ -267,7 +267,13 @@ https://claude.ai/artifact/JXwsnCcobFmRzHGix8mra2
   agent `--pair CODE`), failure rate limits (login, 2FA, pairing, agent hello),
   sessions bound to the password hash.
 - **M5 — Mobile agents.** Android APK (background camera, sideload + self-update);
-  iPhone via 3uTools (foreground-only, documented).
+  iPhone via 3uTools (foreground-only, documented). *Built 2026-10-29 (Android):*
+  `mobile/` = Capacitor shell loading `/connect` (web updates reach the app with
+  no reinstall) + native `AgentService` foreground service (camera|microphone,
+  CPU + Wi-Fi locks) + `RemoteAgent` plugin (start/stop/status/battery
+  exemption) + in-app QR scan for pairing. APK: `cd mobile && npm run build:apk`
+  -> `public/download/remote-agent.apk` (served at `/download/remote-agent.apk`).
+  iPhone stays browser-only (foreground).
 - **M6 — Polish & run.** PWA install, reconnection, systemd/pm2 autostart,
   backups, media transfer, offline/online notifications.
 
@@ -285,6 +291,7 @@ https://claude.ai/artifact/JXwsnCcobFmRzHGix8mra2
 
 ## 10. Change log
 
+- **2026-10-29** — M5 Android agent app built (APK 1.0.0, signed with the H_CHAT key).
 - **2026-10-29** — M4 auth hardening built (2FA, QR pairing, rate limits,
   password-bound sessions, self-service password change).
 - **2026-10-27** — v0.1 architecture draft created. Design system confirmed as

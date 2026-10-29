@@ -11,11 +11,32 @@ import { api } from '../api.js';
 // claimed once for this device's credentials (the fragment never reaches the
 // server logs). A code can also be typed in.
 //
+// Android app (M5): the Remote Agent APK loads this same page in a WebView and
+// exposes window.Capacitor.Plugins.RemoteAgent (a foreground service that keeps
+// camera + network alive with the screen off) and BarcodeScanner (in-app QR).
+// In a plain browser those are absent and the page works as before.
+//
 // Built-in / USB / USB-C / Bluetooth cameras all appear as selectable video
 // inputs. IP cameras (RTSP) can't be captured by a browser directly — they need
 // a server-side gateway (planned); an MJPEG URL that allows CORS is attempted.
 
 const LS_KEY = 'remote.agent.cred';
+const cap = () => window.Capacitor;
+const isNative = () => !!cap()?.isNativePlatform?.();
+const plugin = (name) => cap()?.Plugins?.[name];
+const isAndroidBrowser = () => !isNative() && /Android/i.test(navigator.userAgent);
+
+async function scanQr() {
+  const scanner = plugin('BarcodeScanner');
+  if (!scanner) throw new Error('QR scanner not available');
+  const { available } = await scanner.isGoogleBarcodeScannerModuleAvailable();
+  if (!available) {
+    await scanner.installGoogleBarcodeScannerModule();
+    throw new Error('Google Play services is installing the QR scanner — try again in a moment.');
+  }
+  const { barcodes } = await scanner.scan({ formats: ['QR_CODE'] });
+  return barcodes?.[0]?.rawValue || null;
+}
 const loadCred = () => { try { return JSON.parse(localStorage.getItem(LS_KEY)) || null; } catch { return null; } };
 const saveCred = (c) => { try { localStorage.setItem(LS_KEY, JSON.stringify(c)); } catch {} };
 
@@ -30,6 +51,7 @@ export default function Connect() {
   const [pairCode, setPairCode] = useState('');
   const [paired, setPaired] = useState('');
   const [showManual, setShowManual] = useState(false);
+  const [bg, setBg] = useState(null); // native only: { running, batteryExempt, version }
 
   // sources
   const [cameras, setCameras] = useState([]);
@@ -162,7 +184,7 @@ export default function Connect() {
     ws.onopen = () => { retry.current = 1000; send({ type: 'hello', token: cred.token, device: cred.device, capabilities: [{ cap: 'camera' }] }); };
     ws.onmessage = (ev) => {
       let msg; try { msg = JSON.parse(ev.data); } catch { return; }
-      if (msg.type === 'hello-ok') setStatus('online');
+      if (msg.type === 'hello-ok') { setStatus('online'); startBackground(cred.device.name); }
       else if (msg.type === 'signal') onSignal(msg.from, msg.data);
     };
     ws.onclose = () => {
@@ -174,6 +196,32 @@ export default function Connect() {
       retry.current = Math.min(retry.current * 2, 15000);
     };
     ws.onerror = () => { try { ws.close(); } catch {} };
+  }
+
+  // ---- Android app: background service ------------------------------------
+  async function refreshBg() {
+    const ra = plugin('RemoteAgent');
+    if (ra) { try { setBg(await ra.status()); } catch {} }
+  }
+  async function startBackground(deviceName) {
+    const ra = plugin('RemoteAgent');
+    if (!ra) return;
+    try { await ra.start({ name: deviceName || '', audio: micOn }); } catch (e) { setErr(e.message); }
+    refreshBg();
+  }
+  async function askBattery() {
+    try { await plugin('RemoteAgent').batteryExemption(); } catch {}
+    setTimeout(refreshBg, 4000); // the system dialog returns asynchronously
+  }
+  async function scanAndClaim() {
+    setErr('');
+    try {
+      const raw = await scanQr();
+      if (!raw) return;
+      const m = raw.match(/pair=([A-Za-z0-9-]+)/) || raw.match(/^([A-Za-z0-9]{4}-?[A-Za-z0-9]{4})$/);
+      if (!m) throw new Error('That QR is not a Remote pairing code.');
+      claim(m[1]);
+    } catch (e) { setErr(e.message); }
   }
 
   async function claim(code) {
@@ -218,10 +266,17 @@ export default function Connect() {
     for (const pc of pcsRef.current.values()) { try { pc.close(); } catch {} }
     pcsRef.current.clear(); setWatchers(0);
     stopStream();
+    plugin('RemoteAgent')?.stop().catch(() => {});
+    setBg(null);
     setStatus('setup');
   }
 
   useEffect(() => { navigator.mediaDevices?.addEventListener?.('devicechange', enumerate); return () => { stop.current = true; try { wsRef.current?.close(); } catch {} stopStream(); navigator.mediaDevices?.removeEventListener?.('devicechange', enumerate); }; }, []);
+
+  // Android app: re-type the service (camera, or camera + microphone) when audio is toggled
+  useEffect(() => { if (status === 'online') startBackground(name || id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [micOn]);
 
   const liveView = status === 'online' || status === 'connecting';
 
@@ -246,6 +301,10 @@ export default function Connect() {
                       value={pairCode} onChange={(e) => setPairCode(e.target.value)} /></label>
                   <button type="button" style={{ width: '100%', marginBottom: 14 }} disabled={!pairCode.trim()}
                     onClick={() => claim(pairCode)}>Pair this device</button>
+                  {isNative() && (
+                    <button type="button" className="secondary" style={{ width: '100%', marginBottom: 14 }}
+                      onClick={scanAndClaim}>Scan pairing QR</button>
+                  )}
                 </>
               )}
               {(id && token) || showManual ? null : (
@@ -264,6 +323,11 @@ export default function Connect() {
               </>}
               {((id && token) || showManual) && <button type="submit" style={{ width: '100%' }}>Connect &amp; share</button>}
               {err && <div className="login-err">{err}</div>}
+              {isAndroidBrowser() && (
+                <p className="muted rem-sub" style={{ textAlign: 'center', marginTop: 14 }}>
+                  In a browser the camera stops when the screen turns off.
+                  For an always-on Android camera, <a href="/download/remote-agent.apk">install the Remote Agent app</a>.</p>
+              )}
             </form>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -314,6 +378,22 @@ export default function Connect() {
                   RTSP IP cameras need a server-side gateway (planned). Only MJPEG/HTTP streams that send CORS headers work in-browser.</p>}
               </div>
 
+              {bg && (
+                <div className="cap-block" style={{ marginTop: 0 }}>
+                  <div className="cap-head">Background</div>
+                  <div className="ctl-row">
+                    <span className="ctl-label">Keeps streaming with the screen off</span>
+                    <span className={`status ${bg.running ? 'status-live' : 'status-planned'}`}>{bg.running ? 'on' : 'off'}</span>
+                  </div>
+                  {!bg.batteryExempt && (
+                    <>
+                      <p className="muted rem-sub" style={{ margin: '6px 0 8px' }}>
+                        Android may cut the connection overnight to save battery. Allow Remote Agent to run unrestricted:</p>
+                      <button className="secondary" onClick={askBattery}>Allow background use</button>
+                    </>
+                  )}
+                </div>
+              )}
               <button className="secondary" onClick={disconnect}>Disconnect</button>
               {err && <div className="ctl-note err" style={{ textAlign: 'center' }}>{err}</div>}
             </div>

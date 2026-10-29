@@ -1,0 +1,17 @@
+{
+  "name": "remote-agent-android",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Remote Agent: Android shell around remote.omranisystems.com/connect with a background camera service.",
+  "scripts": {
+    "build:apk": "node scripts/build-apk.mjs"
+  },
+  "dependencies": {
+    "@capacitor-mlkit/barcode-scanning": "8.2.1",
+    "@capacitor/android": "8.5.3",
+    "@capacitor/core": "8.5.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.3"
+  }
+}

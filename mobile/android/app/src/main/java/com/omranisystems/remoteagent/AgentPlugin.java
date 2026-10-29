@@ -15,7 +15,8 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 /**
  * Called by the /connect page (window.Capacitor.Plugins.RemoteAgent) to keep sharing alive in the background:
- * start() when the device is online, stop() on disconnect. batteryExemption() opens Android's
+ * start() when the device is online, stop() on disconnect. While started, the WebView stays "visible" to
+ * Chromium (SharingWebView) so the camera keeps streaming with another app in front. batteryExemption() opens Android's
  * "ignore battery optimisations" prompt so Doze doesn't cut the network overnight.
  */
 @CapacitorPlugin(name = "RemoteAgent")
@@ -28,6 +29,7 @@ public class AgentPlugin extends Plugin {
         service.putExtra("audio", Boolean.TRUE.equals(call.getBoolean("audio", false)));
         try {
             ContextCompat.startForegroundService(getContext(), service);
+            setKeepVisible(true);
             call.resolve();
         } catch (Exception e) {
             call.reject("Could not start background sharing: " + e.getMessage());
@@ -37,7 +39,15 @@ public class AgentPlugin extends Plugin {
     @PluginMethod
     public void stop(PluginCall call) {
         getContext().stopService(new Intent(getContext(), AgentService.class));
+        setKeepVisible(false);
         call.resolve();
+    }
+
+    private void setKeepVisible(boolean on) {
+        SharingWebView.keepVisible = on;
+        getActivity().runOnUiThread(() -> {
+            if (getBridge().getWebView() instanceof SharingWebView) ((SharingWebView) getBridge().getWebView()).refreshVisibility();
+        });
     }
 
     @PluginMethod

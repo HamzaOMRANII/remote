@@ -34,7 +34,7 @@ export default function PairPanel({ pairing, online, onNew, onClose }) {
           <p className="rem-sub" style={{ marginTop: 0 }}>
             <b>Phone / laptop:</b> scan with the camera; it opens the connect page already signed in as this device.
             Or open <code>{location.origin}/connect</code> and type the code.
-            {' '}<b>Android, always-on camera:</b> install <a href="/download/remote-agent.apk">Remote Agent</a> and tap <i>Scan pairing QR</i>.</p>
+            {' '}<b>Android, always-on camera:</b> install the <a href="/download/remote-agent.apk">Remote app</a> and tap <i>Scan pairing QR</i>.</p>
           <div className="pair-code mono">{code}</div>
           <p className="muted rem-sub" style={{ marginTop: 4 }}>
             {expired ? 'Expired.' : `One use · expires in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`}</p>

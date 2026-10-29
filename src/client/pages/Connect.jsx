@@ -411,7 +411,7 @@ export default function Connect() {
                   {!bg.batteryExempt && (
                     <>
                       <p className="muted rem-sub" style={{ margin: '6px 0 8px' }}>
-                        Android may cut the connection overnight to save battery. Allow Remote Agent to run unrestricted:</p>
+                        Android may cut the connection overnight to save battery. Allow the Remote app to run unrestricted:</p>
                       <button className="secondary" onClick={askBattery}>Allow background use</button>
                     </>
                   )}

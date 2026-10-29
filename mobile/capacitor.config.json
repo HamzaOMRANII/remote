@@ -1,6 +1,6 @@
 {
   "appId": "com.omranisystems.remoteagent",
-  "appName": "Remote Agent",
+  "appName": "Remote",
   "webDir": "www",
   "backgroundColor": "#050B14",
   "server": {

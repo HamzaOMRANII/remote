@@ -1,8 +1,8 @@
 {
-  "version": "1.1.0",
-  "versionCode": 10100,
+  "version": "1.2.0",
+  "versionCode": 10200,
   "file": "remote-agent.apk",
-  "size": 5057535,
-  "sha256": "9193973d465c7afe55788789abb49e990a1f5d792e4ff823f1a63b9cb0bf683f",
-  "date": "2026-10-29T04:56:43.929Z"
+  "size": 5099999,
+  "sha256": "2d951dc075865c926bfccdc7459b9dd94ed18f0558e0623935df20d7a0152fc5",
+  "date": "2026-10-29T05:12:35.830Z"
 }

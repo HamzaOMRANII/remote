@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import Background from '../components/Background.jsx';
 import { api } from '../api.js';
 import AppDownload from '../components/AppDownload.jsx';
-import { isNative, plugin, isAndroidBrowser, autoShare } from '../native.js';
+import NativeShare from '../components/NativeShare.jsx';
+import { isNative, plugin, isAndroidBrowser } from '../native.js';
 
 // Browser agent — the page you open ON the device. Paste the access, choose the
 // camera + microphone, grant permission, and it streams to the dashboard over
@@ -13,10 +14,11 @@ import { isNative, plugin, isAndroidBrowser, autoShare } from '../native.js';
 // claimed once for this device's credentials (the fragment never reaches the
 // server logs). A code can also be typed in.
 //
-// Android app (M5): the Remote Agent APK loads this same page in a WebView and
-// exposes window.Capacitor.Plugins.RemoteAgent (a foreground service that keeps
-// camera + network alive with the screen off) and BarcodeScanner (in-app QR).
-// In a plain browser those are absent and the page works as before.
+// Android app (M5): the Remote APK loads this same page in a WebView. Pairing
+// works the same (plus in-app QR scan via BarcodeScanner), but the streaming is
+// done by the app's native background service (NativeShare -> RemoteAgent
+// plugin), so it survives the app being closed. In a plain browser the page
+// streams itself, as before.
 //
 // Built-in / USB / USB-C / Bluetooth cameras all appear as selectable video
 // inputs. IP cameras (RTSP) can't be captured by a browser directly — they need
@@ -49,7 +51,8 @@ export default function Connect() {
   const [pairCode, setPairCode] = useState('');
   const [paired, setPaired] = useState('');
   const [showManual, setShowManual] = useState(false);
-  const [bg, setBg] = useState(null); // native only: { running, batteryExempt, version }
+  // Android app: the native service streams; this page only controls it
+  const [nativeMode, setNativeMode] = useState(() => isNative() && !!(saved?.token && saved?.device?.id));
 
   // sources
   const [cameras, setCameras] = useState([]);
@@ -182,7 +185,7 @@ export default function Connect() {
     ws.onopen = () => { retry.current = 1000; send({ type: 'hello', token: cred.token, device: cred.device, capabilities: [{ cap: 'camera' }] }); };
     ws.onmessage = (ev) => {
       let msg; try { msg = JSON.parse(ev.data); } catch { return; }
-      if (msg.type === 'hello-ok') { setStatus('online'); startBackground(cred.device.name); }
+      if (msg.type === 'hello-ok') setStatus('online');
       else if (msg.type === 'signal') onSignal(msg.from, msg.data);
     };
     ws.onclose = () => {
@@ -196,21 +199,7 @@ export default function Connect() {
     ws.onerror = () => { try { ws.close(); } catch {} };
   }
 
-  // ---- Android app: background service ------------------------------------
-  async function refreshBg() {
-    const ra = plugin('RemoteAgent');
-    if (ra) { try { setBg(await ra.status()); } catch {} }
-  }
-  async function startBackground(deviceName) {
-    const ra = plugin('RemoteAgent');
-    if (!ra) return;
-    try { await ra.start({ name: deviceName || '', audio: micOn }); } catch (e) { setErr(e.message); }
-    refreshBg();
-  }
-  async function askBattery() {
-    try { await plugin('RemoteAgent').batteryExemption(); } catch {}
-    setTimeout(refreshBg, 4000); // the system dialog returns asynchronously
-  }
+  // ---- Android app: in-app QR scan ----------------------------------------
   async function scanAndClaim() {
     setErr('');
     try {
@@ -230,6 +219,7 @@ export default function Connect() {
       saveCred(cred);
       setId(r.device.id); setToken(r.token); setName(r.device.name || r.device.id);
       setPaired(r.device.name || r.device.id); setPairCode('');
+      if (isNative()) setNativeMode(true);
     } catch (e) { setErr(e.message); }
   }
 
@@ -256,30 +246,25 @@ export default function Connect() {
     if (!id.trim() || !token.trim()) { setErr('Enter the device id and access token.'); return; }
     const cred = { token: token.trim(), device: { id: id.trim(), name: name.trim() || id.trim(), platform: isNative() ? 'android' : 'browser' } };
     const savedServer = loadCred()?.server; if (savedServer) cred.server = savedServer;
-    saveCred(cred); setStatus('connecting');
+    saveCred(cred);
+    if (isNative()) { setNativeMode(true); return; }
+    setStatus('connecting');
     try { const r = await fetch('/api/ice'); if (r.ok) iceRef.current = (await r.json()).iceServers || iceRef.current; } catch {}
     try { await acquireStream(); await enumerate(); }
     catch (e2) { setErr('Camera/permission: ' + e2.message); setStatus('error'); return; }
     stop.current = false; connect(cred);
-    if (isNative()) autoShare.set(true);
   }
-
-  // App: reopening it while sharing was on goes straight back to sharing
-  useEffect(() => {
-    const c = loadCred();
-    if (isNative() && autoShare.get() && c?.token && c?.device?.id) start(c.device.id, c.token, c.device.name || '');
-    // leaving the page (e.g. to the dashboard) ends the stream, so end the background service too
-    const onHide = () => plugin('RemoteAgent')?.stop().catch(() => {});
-    window.addEventListener('pagehide', onHide);
-    return () => window.removeEventListener('pagehide', onHide);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   function openDashboard(e) {
     e.preventDefault();
-    if (status === 'online' && !window.confirm('Opening the dashboard stops sharing this camera. Continue?')) return;
-    if (status === 'online' || status === 'connecting') { disconnect(); autoShare.set(true); } // resume on next app start
+    // browser: leaving the page ends this tab's stream (the app's native sharing keeps going)
+    if (!isNative() && status === 'online' && !window.confirm('Opening the dashboard stops sharing this camera. Continue?')) return;
     location.href = '/';
+  }
+
+  function forgetAccess() {
+    try { localStorage.removeItem(LS_KEY); } catch {}
+    setId(''); setToken(''); setName(''); setPaired(''); setNativeMode(false);
   }
 
   function disconnect() {
@@ -288,18 +273,10 @@ export default function Connect() {
     for (const pc of pcsRef.current.values()) { try { pc.close(); } catch {} }
     pcsRef.current.clear(); setWatchers(0);
     stopStream();
-    plugin('RemoteAgent')?.stop().catch(() => {});
-    autoShare.set(false);
-    setBg(null);
     setStatus('setup');
   }
 
   useEffect(() => { navigator.mediaDevices?.addEventListener?.('devicechange', enumerate); return () => { stop.current = true; try { wsRef.current?.close(); } catch {} stopStream(); navigator.mediaDevices?.removeEventListener?.('devicechange', enumerate); }; }, []);
-
-  // Android app: re-type the service (camera, or camera + microphone) when audio is toggled
-  useEffect(() => { if (status === 'online') startBackground(name || id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [micOn]);
 
   const liveView = status === 'online' || status === 'connecting';
 
@@ -313,7 +290,9 @@ export default function Connect() {
           </div>
           <div className="domain" style={{ textAlign: 'center', marginBottom: 18 }}>connect this device</div>
 
-          {!liveView ? (
+          {nativeMode ? (
+            <NativeShare cred={loadCred() || { token, device: { id, name } }} onForget={forgetAccess} />
+          ) : !liveView ? (
             <form onSubmit={go}>
               {paired ? (
                 <p className="rem-sub" style={{ textAlign: 'center' }}><span className="live-dot" /> Paired as <b>{paired}</b>. Tap below to start sharing.</p>
@@ -401,22 +380,6 @@ export default function Connect() {
                   RTSP IP cameras need a server-side gateway (planned). Only MJPEG/HTTP streams that send CORS headers work in-browser.</p>}
               </div>
 
-              {bg && (
-                <div className="cap-block" style={{ marginTop: 0 }}>
-                  <div className="cap-head">Background</div>
-                  <div className="ctl-row">
-                    <span className="ctl-label">Keeps streaming with the screen off</span>
-                    <span className={`status ${bg.running ? 'status-live' : 'status-planned'}`}>{bg.running ? 'on' : 'off'}</span>
-                  </div>
-                  {!bg.batteryExempt && (
-                    <>
-                      <p className="muted rem-sub" style={{ margin: '6px 0 8px' }}>
-                        Android may cut the connection overnight to save battery. Allow the Remote app to run unrestricted:</p>
-                      <button className="secondary" onClick={askBattery}>Allow background use</button>
-                    </>
-                  )}
-                </div>
-              )}
               <button className="secondary" onClick={disconnect}>Disconnect</button>
               {err && <div className="ctl-note err" style={{ textAlign: 'center' }}>{err}</div>}
             </div>

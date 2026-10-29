@@ -1,59 +1,96 @@
 package com.omranisystems.remoteagent;
 
-import android.app.ActivityManager;
+import android.Manifest;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.Build;
 import android.os.PowerManager;
 import android.provider.Settings;
 import androidx.core.content.ContextCompat;
 import com.getcapacitor.JSObject;
+import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import com.getcapacitor.annotation.Permission;
+import com.getcapacitor.annotation.PermissionCallback;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
- * Called by the /connect page (window.Capacitor.Plugins.RemoteAgent) to keep sharing alive in the background:
- * start() when the device is online, stop() on disconnect. While started, the WebView stays "visible" to
- * Chromium (SharingWebView) so the camera keeps streaming with another app in front. batteryExemption() opens Android's
- * "ignore battery optimisations" prompt so Doze doesn't cut the network overnight.
+ * Remote control for AgentService, called by the /connect page (window.Capacitor.Plugins.RemoteAgent):
+ *   share({server, token, id, name, front, audio})  asks for permissions, then streams natively in the background
+ *   stop()                                           ends sharing
+ *   status()                                         { sharing, state, watchers, error, front, audio, batteryExempt, version }
+ *   batteryExemption()                               Android's "ignore battery optimisations" prompt
  */
-@CapacitorPlugin(name = "RemoteAgent")
+@CapacitorPlugin(
+    name = "RemoteAgent",
+    permissions = {
+        @Permission(alias = "camera", strings = { Manifest.permission.CAMERA }),
+        @Permission(alias = "microphone", strings = { Manifest.permission.RECORD_AUDIO }),
+        @Permission(alias = "notifications", strings = { Manifest.permission.POST_NOTIFICATIONS }),
+    }
+)
 public class AgentPlugin extends Plugin {
 
     @PluginMethod
-    public void start(PluginCall call) {
-        Intent service = new Intent(getContext(), AgentService.class);
-        service.putExtra("name", call.getString("name", ""));
-        service.putExtra("audio", Boolean.TRUE.equals(call.getBoolean("audio", false)));
+    public void share(PluginCall call) {
+        List<String> need = new ArrayList<>();
+        if (getPermissionState("camera") != PermissionState.GRANTED) need.add("camera");
+        if (call.getBoolean("audio", false) && getPermissionState("microphone") != PermissionState.GRANTED) need.add("microphone");
+        if (Build.VERSION.SDK_INT >= 33 && getPermissionState("notifications") != PermissionState.GRANTED) need.add("notifications");
+        if (need.isEmpty()) startSharing(call);
+        else requestPermissionForAliases(need.toArray(new String[0]), call, "afterPermissions");
+    }
+
+    @PermissionCallback
+    private void afterPermissions(PluginCall call) {
+        if (getPermissionState("camera") != PermissionState.GRANTED) {
+            call.reject("Camera permission is needed to share this phone.");
+            return;
+        }
+        startSharing(call); // microphone / notifications are optional
+    }
+
+    private void startSharing(PluginCall call) {
+        boolean audio = call.getBoolean("audio", false) && getPermissionState("microphone") == PermissionState.GRANTED;
+        Intent i = new Intent(getContext(), AgentService.class).setAction(AgentService.ACTION_START)
+            .putExtra("server", call.getString("server"))
+            .putExtra("token", call.getString("token"))
+            .putExtra("id", call.getString("id"))
+            .putExtra("name", call.getString("name", ""))
+            .putExtra("front", call.getBoolean("front", false))
+            .putExtra("audio", audio);
         try {
-            ContextCompat.startForegroundService(getContext(), service);
-            setKeepVisible(true);
+            ContextCompat.startForegroundService(getContext(), i);
             call.resolve();
         } catch (Exception e) {
-            call.reject("Could not start background sharing: " + e.getMessage());
+            call.reject("Could not start sharing: " + e.getMessage());
         }
     }
 
     @PluginMethod
     public void stop(PluginCall call) {
-        getContext().stopService(new Intent(getContext(), AgentService.class));
-        setKeepVisible(false);
+        Intent i = new Intent(getContext(), AgentService.class).setAction(AgentService.ACTION_STOP);
+        try { getContext().startService(i); } catch (Exception e) { getContext().stopService(new Intent(getContext(), AgentService.class)); }
         call.resolve();
-    }
-
-    private void setKeepVisible(boolean on) {
-        SharingWebView.keepVisible = on;
-        getActivity().runOnUiThread(() -> {
-            if (getBridge().getWebView() instanceof SharingWebView) ((SharingWebView) getBridge().getWebView()).refreshVisibility();
-        });
     }
 
     @PluginMethod
     public void status(PluginCall call) {
+        android.content.SharedPreferences p = getContext().getSharedPreferences(AgentService.PREFS, Context.MODE_PRIVATE);
         JSObject r = new JSObject();
-        r.put("running", running());
+        r.put("sharing", AgentService.active);
+        r.put("state", AgentService.active ? NativeAgent.state : (p.getBoolean("sharing", false) ? "paused" : "stopped"));
+        r.put("watchers", NativeAgent.watchers);
+        r.put("error", NativeAgent.lastError);
+        r.put("deviceId", p.getString("id", ""));
+        r.put("name", p.getString("name", ""));
+        r.put("front", p.getBoolean("front", false));
+        r.put("audio", p.getBoolean("audio", false));
         r.put("batteryExempt", batteryExempt());
         r.put("version", BuildConfig.VERSION_NAME);
         call.resolve(r);
@@ -72,14 +109,5 @@ public class AgentPlugin extends Plugin {
     private boolean batteryExempt() {
         PowerManager pm = (PowerManager) getContext().getSystemService(Context.POWER_SERVICE);
         return pm.isIgnoringBatteryOptimizations(getContext().getPackageName());
-    }
-
-    @SuppressWarnings("deprecation")
-    private boolean running() {
-        ActivityManager am = (ActivityManager) getContext().getSystemService(Context.ACTIVITY_SERVICE);
-        for (ActivityManager.RunningServiceInfo s : am.getRunningServices(Integer.MAX_VALUE)) {
-            if (AgentService.class.getName().equals(s.service.getClassName())) return true;
-        }
-        return false;
     }
 }

@@ -7,7 +7,6 @@ import Users from './pages/Users.jsx';
 import Connect from './pages/Connect.jsx';
 import Account from './pages/Account.jsx';
 import Background from './components/Background.jsx';
-import { isNative, autoShare } from './native.js';
 
 export default function App() {
   const path = usePath();
@@ -15,8 +14,6 @@ export default function App() {
   const [me, setMe] = useState(undefined);
 
   useEffect(() => {
-    // Android app: it was sharing when last closed -> resume sharing
-    if (path === '/' && isNative() && autoShare.get()) { go('/connect')(); return; }
     if (path === '/login' || path === '/connect') return;
     api.me()
       .then((d) => setMe({ username: d.username, role: d.role, twoFactor: d.twoFactor }))

@@ -34,6 +34,13 @@
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
 
+        <!-- "Check camera": live preview of what the dashboard receives -->
+        <activity
+            android:name=".PreviewActivity"
+            android:exported="false"
+            android:screenOrientation="unspecified"
+            android:theme="@style/AppTheme.NoActionBar" />
+
         <!-- Keeps the camera/microphone stream alive with the screen off or the app in the background -->
         <service
             android:name=".AgentService"

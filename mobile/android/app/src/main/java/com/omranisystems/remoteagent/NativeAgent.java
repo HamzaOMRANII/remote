@@ -5,7 +5,9 @@ import android.util.Log;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -34,6 +36,7 @@ import org.webrtc.RtpReceiver;
 import org.webrtc.SdpObserver;
 import org.webrtc.SessionDescription;
 import org.webrtc.SurfaceTextureHelper;
+import org.webrtc.VideoSink;
 import org.webrtc.VideoSource;
 import org.webrtc.VideoTrack;
 import org.webrtc.audio.JavaAudioDeviceModule;
@@ -45,7 +48,8 @@ import org.webrtc.audio.JavaAudioDeviceModule;
  *   agent -> server  hello { token, device, capabilities:[{cap:"camera"}] }      <- hello-ok
  *   viewer -> agent  signal { from, data:{kind:"request"} }  -> offer (camera track) -> answer -> ice both ways
  *
- * The camera only runs while at least one viewer is watching. All state changes run on one thread.
+ * The camera only runs while at least one viewer is watching or the phone's own "Check camera" preview is open
+ * (PreviewActivity). All state changes run on one thread.
  */
 class NativeAgent {
     private static final String TAG = "RemoteAgent";
@@ -54,6 +58,7 @@ class NativeAgent {
     static volatile String state = "stopped"; // stopped | connecting | online | error
     static volatile int watchers = 0;
     static volatile String lastError = "";
+    static volatile NativeAgent current; // the running agent, for PreviewActivity
 
     interface Listener { void onChanged(); }
 
@@ -78,6 +83,7 @@ class NativeAgent {
     private AudioSource audioSource;
     private AudioTrack audioTrack;
     private final Map<String, PeerConnection> peers = new HashMap<>();
+    private final Set<VideoSink> previews = new HashSet<>();
 
     NativeAgent(Context ctx, String wsUrl, String token, String deviceId, String deviceName, boolean front, boolean audio, Listener l) {
         this.ctx = ctx.getApplicationContext();
@@ -91,11 +97,44 @@ class NativeAgent {
         this.listener = l;
     }
 
-    void start() { loop.execute(this::connect); }
+    void start() { current = this; loop.execute(this::connect); }
+
+    boolean isFront() { return front; }
+
+    // ---- local preview ("Check camera") ---------------------------------------------------------------------
+
+    interface PreviewReady { void onReady(EglBase.Context egl); }
+
+    /** Starts the camera if needed and hands back the EGL context the renderer must be initialised with. */
+    void openPreview(PreviewReady ready) {
+        loop.execute(() -> {
+            ensureFactory();
+            if (!startCamera()) { ready.onReady(null); return; }
+            ready.onReady(egl.getEglBaseContext());
+        });
+    }
+
+    /** Call after the renderer is initialised with the context from openPreview(). */
+    void attachPreview(VideoSink sink) {
+        loop.execute(() -> { previews.add(sink); if (videoTrack != null) videoTrack.addSink(sink); });
+    }
+
+    /** Detaches the renderer, releases the camera if nobody watches, then runs done (release the renderer there). */
+    void closePreview(VideoSink sink, Runnable done) {
+        if (loop.isShutdown()) { done.run(); return; }
+        loop.execute(() -> {
+            previews.remove(sink);
+            if (videoTrack != null) videoTrack.removeSink(sink);
+            if (peers.isEmpty() && previews.isEmpty()) stopCamera();
+            done.run();
+        });
+    }
 
     void stop() {
         loop.execute(() -> {
             running = false;
+            if (current == this) current = null;
+            previews.clear();
             if (ws != null) ws.close(1000, "stopped");
             for (PeerConnection pc : peers.values()) pc.close();
             peers.clear();
@@ -136,7 +175,7 @@ class NativeAgent {
     private void onDrop(int code, String reason) {
         for (PeerConnection pc : peers.values()) pc.close();
         peers.clear();
-        stopCamera();
+        if (previews.isEmpty()) stopCamera(); // an open preview keeps the camera while we reconnect
         if (!running) return;
         if (code == 4003) { // credentials rejected: retrying would only hit the rate limit
             setState("error", 0, "Access rejected — pair this device again from the dashboard.");
@@ -227,7 +266,7 @@ class NativeAgent {
     private void closePeer(String viewer) {
         PeerConnection pc = peers.remove(viewer);
         if (pc != null) pc.close();
-        if (peers.isEmpty()) stopCamera(); // nobody watching: release the camera (battery, privacy indicator)
+        if (peers.isEmpty() && previews.isEmpty()) stopCamera(); // nobody watching: release the camera (battery, privacy indicator)
         setState(state, peers.size(), null);
     }
 
@@ -285,6 +324,7 @@ class NativeAgent {
         capturer.initialize(textures, ctx, videoSource.getCapturerObserver());
         capturer.startCapture(1280, 720, 30);
         videoTrack = factory.createVideoTrack("cam0", videoSource);
+        for (VideoSink sink : previews) videoTrack.addSink(sink);
         if (audio) {
             audioSource = factory.createAudioSource(new MediaConstraints());
             audioTrack = factory.createAudioTrack("mic0", audioSource);

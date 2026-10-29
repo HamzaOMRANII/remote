@@ -52,6 +52,11 @@ export default function NativeShare({ cred, onForget }) {
     if (next.audio !== undefined) setAudio(next.audio);
     if (st && st.sharing) share(next);
   }
+  // full-screen native view of exactly what the dashboard receives
+  async function checkCamera() {
+    setErr('');
+    try { await ra.preview(); } catch (e) { setErr(e.message); }
+  }
   async function askBattery() {
     try { await ra.batteryExemption(); } catch {}
     setTimeout(refresh, 4000); // the system dialog returns asynchronously
@@ -87,13 +92,17 @@ export default function NativeShare({ cred, onForget }) {
         </div>
       </div>
 
-      {sharing
-        ? <button className="secondary" disabled={busy} onClick={stop}>Stop sharing</button>
-        : <button disabled={busy} onClick={() => share()}>{busy ? 'Starting…' : 'Start sharing'}</button>}
+      {sharing ? (
+        <>
+          <button onClick={checkCamera}>Check camera</button>
+          <button className="secondary" disabled={busy} onClick={stop}>Stop sharing</button>
+        </>
+      ) : <button disabled={busy} onClick={() => share()}>{busy ? 'Starting…' : 'Start sharing'}</button>}
 
       <p className="muted rem-sub" style={{ margin: 0, textAlign: 'center' }}>
         Keeps streaming with the screen off and when you close the app.
-        Stop it here or from the notification.</p>
+        Stop it here or from the notification.
+        {sharing && ' Check camera shows what the dashboard sees.'}</p>
 
       {st && !st.batteryExempt && (
         <div className="cap-block" style={{ marginTop: 0 }}>

@@ -1,8 +1,8 @@
 {
   "name": "remote-agent-android",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
-  "description": "Remote Agent: Android shell around remote.omranisystems.com/connect with a background camera service.",
+  "description": "Remote Agent: Android app for remote.omranisystems.com: dashboard + camera sharing with a background service.",
   "scripts": {
     "build:apk": "node scripts/build-apk.mjs"
   },

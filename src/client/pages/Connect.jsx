@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import Background from '../components/Background.jsx';
 import { api } from '../api.js';
+import AppDownload from '../components/AppDownload.jsx';
+import { isNative, plugin, isAndroidBrowser, autoShare } from '../native.js';
 
 // Browser agent — the page you open ON the device. Paste the access, choose the
 // camera + microphone, grant permission, and it streams to the dashboard over
@@ -21,10 +23,6 @@ import { api } from '../api.js';
 // a server-side gateway (planned); an MJPEG URL that allows CORS is attempted.
 
 const LS_KEY = 'remote.agent.cred';
-const cap = () => window.Capacitor;
-const isNative = () => !!cap()?.isNativePlatform?.();
-const plugin = (name) => cap()?.Plugins?.[name];
-const isAndroidBrowser = () => !isNative() && /Android/i.test(navigator.userAgent);
 
 async function scanQr() {
   const scanner = plugin('BarcodeScanner');
@@ -249,15 +247,39 @@ export default function Connect() {
   }
 
   async function go(e) {
-    e.preventDefault(); setErr('');
+    e.preventDefault();
+    start(id, token, name);
+  }
+
+  async function start(id, token, name) {
+    setErr('');
     if (!id.trim() || !token.trim()) { setErr('Enter the device id and access token.'); return; }
-    const cred = { token: token.trim(), device: { id: id.trim(), name: name.trim() || id.trim(), platform: 'browser' } };
+    const cred = { token: token.trim(), device: { id: id.trim(), name: name.trim() || id.trim(), platform: isNative() ? 'android' : 'browser' } };
     const savedServer = loadCred()?.server; if (savedServer) cred.server = savedServer;
     saveCred(cred); setStatus('connecting');
     try { const r = await fetch('/api/ice'); if (r.ok) iceRef.current = (await r.json()).iceServers || iceRef.current; } catch {}
     try { await acquireStream(); await enumerate(); }
     catch (e2) { setErr('Camera/permission: ' + e2.message); setStatus('error'); return; }
     stop.current = false; connect(cred);
+    if (isNative()) autoShare.set(true);
+  }
+
+  // App: reopening it while sharing was on goes straight back to sharing
+  useEffect(() => {
+    const c = loadCred();
+    if (isNative() && autoShare.get() && c?.token && c?.device?.id) start(c.device.id, c.token, c.device.name || '');
+    // leaving the page (e.g. to the dashboard) ends the stream, so end the background service too
+    const onHide = () => plugin('RemoteAgent')?.stop().catch(() => {});
+    window.addEventListener('pagehide', onHide);
+    return () => window.removeEventListener('pagehide', onHide);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function openDashboard(e) {
+    e.preventDefault();
+    if (status === 'online' && !window.confirm('Opening the dashboard stops sharing this camera. Continue?')) return;
+    if (status === 'online' || status === 'connecting') { disconnect(); autoShare.set(true); } // resume on next app start
+    location.href = '/';
   }
 
   function disconnect() {
@@ -267,6 +289,7 @@ export default function Connect() {
     pcsRef.current.clear(); setWatchers(0);
     stopStream();
     plugin('RemoteAgent')?.stop().catch(() => {});
+    autoShare.set(false);
     setBg(null);
     setStatus('setup');
   }
@@ -324,10 +347,10 @@ export default function Connect() {
               {((id && token) || showManual) && <button type="submit" style={{ width: '100%' }}>Connect &amp; share</button>}
               {err && <div className="login-err">{err}</div>}
               {isAndroidBrowser() && (
-                <p className="muted rem-sub" style={{ textAlign: 'center', marginTop: 14 }}>
-                  In a browser the camera stops when the screen turns off.
-                  For an always-on Android camera, <a href="/download/remote-agent.apk">install the Remote Agent app</a>.</p>
+                <p className="muted rem-sub" style={{ textAlign: 'center', marginTop: 14, marginBottom: 0 }}>
+                  In a browser the camera stops when the screen turns off.</p>
               )}
+              <div style={{ textAlign: 'center', marginTop: 10 }}><AppDownload /></div>
             </form>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -398,6 +421,8 @@ export default function Connect() {
               {err && <div className="ctl-note err" style={{ textAlign: 'center' }}>{err}</div>}
             </div>
           )}
+          <p className="rem-sub" style={{ textAlign: 'center', margin: '18px 0 0' }}>
+            <a href="/" onClick={openDashboard}>Open the dashboard →</a></p>
         </section>
       </div>
     </>

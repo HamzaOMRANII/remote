@@ -2,6 +2,8 @@ import { useState } from 'react';
 import Background from '../components/Background.jsx';
 import { api } from '../api.js';
 import { go } from '../router.js';
+import AppDownload from '../components/AppDownload.jsx';
+import { isNative } from '../native.js';
 
 // Two steps when the account has 2FA: password -> 6-digit code (or a recovery
 // code). The password step only returns a short-lived ticket in that case.
@@ -68,6 +70,12 @@ export default function Login() {
               <div className="login-err">{err}</div>
             </form>
           )}
+          <div className="login-alt">
+            <a href="/connect" className={isNative() ? 'btn btn-wide' : ''}>
+              {isNative() ? "Share this phone's camera" : "Share this device's camera instead"}</a>
+            <span className="muted rem-sub">No sign-in — uses a pairing code from the dashboard.</span>
+          </div>
+          <AppDownload />
         </section>
       </div>
     </>

@@ -4,6 +4,7 @@ import TopBar from '../components/TopBar.jsx';
 import DeviceCard from '../components/DeviceCard.jsx';
 import AccessSnippet from '../components/AccessSnippet.jsx';
 import PairPanel from '../components/PairPanel.jsx';
+import AppDownload from '../components/AppDownload.jsx';
 import { api } from '../api.js';
 import { useRemote } from '../ws.js';
 
@@ -98,6 +99,7 @@ export default function Devices({ me }) {
           {admin && <AddDevice onCreated={(res) => { load(); onPair(res.device); }} />}
         </div>
 
+        <AppDownload variant="card" />
         {err && <p className="login-err" style={{ minHeight: 0 }}>{err}</p>}
         {pairing && <PairPanel pairing={pairing} online={!!liveById[pairing.device.id]}
           onNew={() => onPair(pairing.device)} onClose={closePairing} />}

@@ -2,7 +2,7 @@
 // Builds the signed Remote Agent APK and publishes it next to the web app:
 //   /projects/remote/public/download/remote-agent.apk   (served at /download/remote-agent.apk after `npm run build`)
 //   /projects/remote/public/download/latest.json        version info
-// The app itself loads https://remote.omranisystems.com/connect, so web changes need no new APK;
+// The app itself loads https://remote.omranisystems.com/ (dashboard + /connect sharing), so web changes need no new APK;
 // rebuild only when the native shell changes (bump "version" in mobile/package.json first).
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";

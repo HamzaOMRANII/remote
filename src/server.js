@@ -49,6 +49,7 @@ const MIME = {
   '.woff': 'font/woff',
   '.woff2': 'font/woff2',
   '.txt': 'text/plain; charset=utf-8',
+  '.apk': 'application/vnd.android.package-archive',
 };
 
 function serveFile(req, res, file, status = 200) {

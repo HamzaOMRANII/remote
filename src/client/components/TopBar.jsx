@@ -1,6 +1,7 @@
 import { api } from '../api.js';
 import { go } from '../router.js';
 import { usePath } from '../router.js';
+import { APK_URL, isNative } from '../native.js';
 
 // Sticky blurred topbar with the family wordmark ("rem" accent + "ote" muted).
 // Shows nav (Users link for admins), the current user, and — on the Devices
@@ -23,6 +24,8 @@ export default function TopBar({ me, connected }) {
         {me && me.role === 'admin' && (
           <a href="/users" className={path === '/users' ? 'active' : ''} onClick={go('/users')}>Users</a>
         )}
+        <a href="/connect" title="Stream this device's camera to the dashboard">{isNative() ? 'Share this phone' : 'Share this device'}</a>
+        {!isNative() && <a href={APK_URL} download title="Android app: dashboard + always-on camera sharing">Get the app</a>}
         {connected !== undefined && (
           <span className="conn" title={connected ? 'Connected' : 'Reconnecting…'}>
             <span className={`live-dot ${connected ? '' : 'off'}`} />{connected ? 'live' : 'offline'}

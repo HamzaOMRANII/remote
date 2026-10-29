@@ -3,6 +3,9 @@ import { APK_URL, isNative } from '../native.js';
 // "Get the Android app" call-to-action. Hidden inside the app itself.
 //   variant="card"   panel with the pitch (Devices page)
 //   variant="inline" one line (Login / Connect)
+// 1.6.0 moved to Remote's own signing key: Android won't update an app signed with another key
+const UPGRADE = 'Have Remote 1.5 or older? Uninstall it first, then install this version (new signing key).';
+
 export default function AppDownload({ variant = 'inline' }) {
   if (isNative()) return null;
   if (variant === 'card') {
@@ -17,7 +20,8 @@ export default function AppDownload({ variant = 'inline' }) {
           <h2 style={{ margin: '0 0 4px' }}>Remote for Android</h2>
           <p className="muted rem-sub" style={{ margin: 0 }}>
             Manage your devices from your phone, and share the phone's camera live —
-            it keeps streaming with the screen off, unlike a browser tab.</p>
+            it keeps streaming with the screen off, unlike a browser tab — and record it on the phone.</p>
+          <p className="muted rem-sub" style={{ margin: '6px 0 0', fontSize: 12 }}>{UPGRADE}</p>
         </div>
         <a className="btn" href={APK_URL} download>Download the app</a>
       </section>
@@ -26,6 +30,7 @@ export default function AppDownload({ variant = 'inline' }) {
   return (
     <p className="muted rem-sub app-dl-inline">
       <a href={APK_URL} download>Get the Android app</a> — dashboard + always-on camera sharing.
+      <br /><span style={{ fontSize: 12 }}>{UPGRADE}</span>
     </p>
   );
 }

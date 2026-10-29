@@ -48,15 +48,15 @@ import org.webrtc.audio.JavaAudioDeviceModule;
  *   agent -> server  hello { token, device, capabilities:[{cap:"camera"}] }      <- hello-ok
  *   viewer -> agent  signal { from, data:{kind:"request"} }  -> offer (camera track) -> answer -> ice both ways
  *
- * The camera only runs while at least one viewer is watching or the phone's own "Check camera" preview is open
- * (PreviewActivity). Switching front/back happens in place (no reconnect).
+ * The camera only runs while at least one viewer is watching, the phone's own "Check camera" preview is open
+ * (PreviewActivity) or a recording is running (Recorder). Switching front/back happens in place (no reconnect).
  *
  * Stability rules (a crash here kills the whole app):
  *   - every task runs on this agent's single thread through post(), which drops work once the agent is stopped
  *     (late WebSocket / WebRTC callbacks) and logs instead of throwing;
  *   - the EGL context and the PeerConnectionFactory live for the whole process: previews and a restarted agent
  *     keep using them, nothing renders with a released context;
- *   - previews are process-wide, so a restarted agent re-attaches them to its new camera track.
+ *   - previews and the recorder are process-wide, so a restarted agent re-attaches them to its new camera track.
  */
 class NativeAgent {
     private static final String TAG = "RemoteAgent";
@@ -72,6 +72,7 @@ class NativeAgent {
     private static EglBase EGL;
     private static PeerConnectionFactory FACTORY;
     private static final Set<VideoSink> PREVIEWS = Collections.synchronizedSet(new HashSet<>());
+    static volatile Recorder RECORDER; // the running recording, if any
 
     interface Listener { void onChanged(); }
 
@@ -109,13 +110,19 @@ class NativeAgent {
     }
 
     /** Runs on the agent thread; silently dropped once stopped; never lets an exception kill the app. */
-    private void post(Runnable r) {
-        if (!running || loop.isShutdown()) return;
+    private boolean post(Runnable r) {
+        if (!running || loop.isShutdown()) return false;
         try {
             loop.execute(() -> {
                 try { r.run(); } catch (Throwable t) { Log.e(TAG, "task failed", t); }
             });
-        } catch (Throwable ignored) { /* shut down between the check and execute */ }
+            return true;
+        } catch (Throwable ignored) { return false; /* shut down between the check and execute */ }
+    }
+
+    /** Someone still needs the camera: a viewer, the phone's preview or a recording. */
+    private boolean cameraNeeded() {
+        return !peers.isEmpty() || !PREVIEWS.isEmpty() || RECORDER != null;
     }
 
     private void changed() {
@@ -126,8 +133,8 @@ class NativeAgent {
         current = this;
         frontNow = front;
         post(this::connect);
-        // a "Check camera" view left open across a restart: feed it from this agent's camera right away
-        if (!PREVIEWS.isEmpty()) post(() -> { ensureFactory(); startCamera(); });
+        // a "Check camera" view or a recording running across a restart: feed it from this agent's camera right away
+        if (!PREVIEWS.isEmpty() || RECORDER != null) post(() -> { ensureFactory(); startCamera(); });
     }
 
     /** Stops everything, then runs done (on the agent thread) — callers start a new agent only after that. */
@@ -195,9 +202,51 @@ class NativeAgent {
         if (a == null || !a.running) { done.run(); return; }
         a.post(() -> {
             if (a.videoTrack != null) a.videoTrack.removeSink(sink);
-            if (a.peers.isEmpty() && PREVIEWS.isEmpty()) a.stopCamera();
+            if (!a.cameraNeeded()) a.stopCamera();
             done.run();
         });
+    }
+
+    // ---- recording (saved on this phone) ----------------------------------------------------------------------
+
+    interface Result { void onResult(String error); }
+
+    /** Starts recording what the dashboard sees (+ microphone when sharing audio); error is null on success. */
+    void startRecording(Result result) {
+        boolean queued = post(() -> {
+            if (RECORDER != null) { result.onResult(null); return; }
+            ensureFactory();
+            if (!startCamera()) { result.onResult(lastError.isEmpty() ? "camera unavailable" : lastError); return; }
+            Recorder r = new Recorder(ctx, EGL.getEglBaseContext(), audio, err -> {
+                lastError = err;
+                stopRecording(null);
+            });
+            RECORDER = r;
+            videoTrack.addSink(r);
+            changed();
+            result.onResult(null);
+        });
+        if (!queued) result.onResult("Start sharing first.");
+    }
+
+    /** Stops the recording (if any): detaches it from the camera, finishes the file in the background, then done. */
+    static void stopRecording(Runnable done) {
+        Recorder r = RECORDER;
+        if (r == null) { if (done != null) done.run(); return; }
+        RECORDER = null;
+        Runnable finish = () -> r.finish(() -> {
+            NativeAgent now = current;
+            if (now != null) now.changed();
+            if (done != null) done.run();
+        });
+        NativeAgent a = current;
+        boolean queued = a != null && a.post(() -> {
+            if (a.videoTrack != null) a.videoTrack.removeSink(r);
+            if (!a.cameraNeeded()) a.stopCamera();
+            a.changed();
+            finish.run();
+        });
+        if (!queued) finish.run();
     }
 
     // ---- signaling connection -------------------------------------------------------------------------------
@@ -225,7 +274,7 @@ class NativeAgent {
         if (socket != ws) return; // an older socket closing late
         for (PeerConnection pc : peers.values()) pc.dispose();
         peers.clear();
-        if (PREVIEWS.isEmpty()) stopCamera(); // an open preview keeps the camera while we reconnect
+        if (!cameraNeeded()) stopCamera(); // an open preview or a recording keeps the camera while we reconnect
         if (!running) return;
         if (code == 4003) { // credentials rejected: retrying would only hit the rate limit
             setState("error", 0, "Access rejected — pair this device again from the dashboard.");
@@ -319,7 +368,7 @@ class NativeAgent {
     private void closePeer(String viewer) {
         PeerConnection pc = peers.remove(viewer);
         if (pc != null) pc.dispose();
-        if (peers.isEmpty() && PREVIEWS.isEmpty()) stopCamera(); // nobody watching: release the camera (battery, privacy indicator)
+        if (!cameraNeeded()) stopCamera(); // nobody watching or recording: release the camera (battery, privacy indicator)
         setState(state, peers.size(), null);
     }
 
@@ -352,7 +401,16 @@ class NativeAgent {
             FACTORY = PeerConnectionFactory.builder()
                 .setVideoEncoderFactory(new DefaultVideoEncoderFactory(EGL.getEglBaseContext(), true, true))
                 .setVideoDecoderFactory(new DefaultVideoDecoderFactory(EGL.getEglBaseContext()))
-                .setAudioDeviceModule(JavaAudioDeviceModule.builder(ctx).createAudioDeviceModule())
+                .setAudioDeviceModule(JavaAudioDeviceModule.builder(ctx)
+                    // mono 48 kHz like the recorder, which reuses these samples while a viewer holds the microphone
+                    .setInputSampleRate(48000)
+                    .setUseStereoInput(false)
+                    .setSamplesReadyCallback(s -> { Recorder r = RECORDER; if (r != null) r.onWebrtcSamples(s); })
+                    .setAudioRecordStateCallback(new JavaAudioDeviceModule.AudioRecordStateCallback() {
+                        @Override public void onWebRtcAudioRecordStart() { Recorder.webrtcMic = true; }
+                        @Override public void onWebRtcAudioRecordStop() { Recorder.webrtcMic = false; }
+                    })
+                    .createAudioDeviceModule())
                 .createPeerConnectionFactory();
         }
     }
@@ -384,6 +442,8 @@ class NativeAgent {
         frontNow = front;
         videoTrack = FACTORY.createVideoTrack("cam0", videoSource);
         synchronized (PREVIEWS) { for (VideoSink sink : PREVIEWS) videoTrack.addSink(sink); }
+        Recorder rec = RECORDER;
+        if (rec != null) videoTrack.addSink(rec);
         if (audio) {
             audioSource = FACTORY.createAudioSource(new MediaConstraints());
             audioTrack = FACTORY.createAudioTrack("mic0", audioSource);
@@ -398,6 +458,8 @@ class NativeAgent {
         }
         if (videoTrack != null) {
             synchronized (PREVIEWS) { for (VideoSink sink : PREVIEWS) videoTrack.removeSink(sink); }
+            Recorder rec = RECORDER;
+            if (rec != null) videoTrack.removeSink(rec);
             videoTrack.dispose(); videoTrack = null;
         }
         if (videoSource != null) { videoSource.dispose(); videoSource = null; }

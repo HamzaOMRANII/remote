@@ -1,6 +1,6 @@
 apply plugin: 'com.android.application'
 
-// Release signing: android/keystore.properties (not in git) — the same key as H_CHAT (/root/.chat-keystore).
+// Release signing: android/keystore.properties (not in git) — Remote's own key (/root/.remote-keystore, since 1.6.0).
 def keystorePropsFile = rootProject.file('keystore.properties')
 def keystoreProps = new Properties()
 if (keystorePropsFile.exists()) {

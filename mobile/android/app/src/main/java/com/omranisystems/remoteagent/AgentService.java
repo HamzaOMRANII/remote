@@ -29,6 +29,7 @@ public class AgentService extends Service {
     static final int ID = 5501;
     static final String ACTION_START = "start";
     static final String ACTION_STOP = "stop";
+    static final String ACTION_STOP_RECORDING = "stop-recording";
     static final String PREFS = "remote_agent";
 
     static volatile boolean active = false;
@@ -45,6 +46,10 @@ public class AgentService extends Service {
         String action = intent == null ? null : intent.getAction();
         SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
 
+        if (ACTION_STOP_RECORDING.equals(action)) {
+            NativeAgent.stopRecording(null);
+            return START_STICKY;
+        }
         if (ACTION_STOP.equals(action)) {
             prefs.edit().putBoolean("sharing", false).apply();
             shutdown();
@@ -103,6 +108,14 @@ public class AgentService extends Service {
         if (s != null && s.agent != null) s.agent.switchCamera(front);
     }
 
+    /** Records what is shared to this phone's gallery; result gets null or an error. */
+    static void startRecording(NativeAgent.Result result) {
+        AgentService s = instance;
+        NativeAgent a = s == null ? null : s.agent;
+        if (a == null) { result.onResult("Start sharing first."); return; }
+        a.startRecording(result);
+    }
+
     private NotificationManager channel() {
         NotificationManager nm = getSystemService(NotificationManager.class);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && nm.getNotificationChannel(CHANNEL) == null) {
@@ -130,17 +143,23 @@ public class AgentService extends Service {
         }
         Intent stop = new Intent(this, AgentService.class).setAction(ACTION_STOP);
         PendingIntent stopPi = PendingIntent.getService(this, 1, stop, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-        return new NotificationCompat.Builder(this, CHANNEL)
-            .setSmallIcon(android.R.drawable.presence_video_online)
-            .setColor(0xFF2FD1D9)
-            .setContentTitle("Remote · " + who + " shared")
-            .setContentText(text)
+        Recorder rec = NativeAgent.RECORDER;
+        NotificationCompat.Builder b = new NotificationCompat.Builder(this, CHANNEL)
+            .setSmallIcon(rec != null ? android.R.drawable.presence_video_busy : android.R.drawable.presence_video_online)
+            .setColor(rec != null ? 0xFFE5484D : 0xFF2FD1D9)
+            .setContentTitle(rec != null ? "Remote · recording " + who.toLowerCase() : "Remote · " + who + " shared")
+            .setContentText(rec != null ? "Saving to this phone · " + text : text)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .setContentIntent(openApp())
-            .addAction(0, "Stop sharing", stopPi)
-            .build();
+            .setContentIntent(openApp());
+        if (rec != null) {
+            // the notification shows the running time of the recording
+            Intent stopRec = new Intent(this, AgentService.class).setAction(ACTION_STOP_RECORDING);
+            b.setWhen(rec.since).setShowWhen(true).setUsesChronometer(true)
+             .addAction(0, "Stop recording", PendingIntent.getService(this, 2, stopRec, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT));
+        }
+        return b.addAction(0, "Stop sharing", stopPi).build();
     }
 
     private void goForeground() {
@@ -197,8 +216,11 @@ public class AgentService extends Service {
     private void shutdown() {
         active = false;
         if (instance == this) instance = null;
+        // finish the recording's file first (keeps the CPU awake until it is written), then stop the agent
+        PowerManager.WakeLock keep = cpu;
+        cpu = null;
+        NativeAgent.stopRecording(() -> { if (keep != null && keep.isHeld()) keep.release(); });
         if (agent != null) { agent.stop(null); agent = null; }
-        if (cpu != null && cpu.isHeld()) cpu.release();
         if (wifi != null && wifi.isHeld()) wifi.release();
     }
 

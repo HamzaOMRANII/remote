@@ -291,6 +291,12 @@ https://claude.ai/artifact/JXwsnCcobFmRzHGix8mra2
 
 ## 10. Change log
 
+- **2026-10-30** — Android app 1.6.0: **recording on the phone**. Record button (app + Check camera +
+  notification Stop) saves what the dashboard sees (+ sound when Share audio is on) as MP4 in Gallery ›
+  Movies/Remote, 5-minute parts, also with the app closed. Nothing goes to the server: Share sends a file to
+  Drive / any app, and the user can paste its cloud link back into the list. Transparent by design (Android's
+  notification shows "recording"). Also: APK now signed with Remote's own key (uninstall ≤1.5 once).
+- **2026-10-29** — Android app 1.3–1.5: native background sharing, Check camera, crash fixes.
 - **2026-10-29** — M5 Android agent app built (APK 1.0.0, signed with the H_CHAT key).
 - **2026-10-29** — M4 auth hardening built (2FA, QR pairing, rate limits,
   password-bound sessions, self-service password change).

@@ -17,6 +17,8 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
 import java.util.ArrayList;
+import org.json.JSONException;
+import org.json.JSONObject;
 import java.util.List;
 
 /**
@@ -25,8 +27,15 @@ import java.util.List;
  *   stop()                                           ends sharing
  *   setCamera({front})                               switches camera in place while sharing
  *   preview()                                        full-screen live view of what the dashboard sees
- *   status()                                         { sharing, state, watchers, error, front, audio, batteryExempt, version }
+ *   status()                                         { sharing, state, watchers, error, front, audio, batteryExempt, version,
+ *                                                      recording, recordingSince, recordingAudio }
  *   batteryExemption()                               Android's "ignore battery optimisations" prompt
+ *   startRecording() / stopRecording()               save what is shared as MP4 on this phone (gallery, Movies/Remote)
+ *   recordings()                                     { items:[{ id, name, started, duration, size, part, link, exists }] }
+ *   playRecording({id}) / shareRecording({id})       open in a video player / Android share sheet (Drive, WhatsApp…)
+ *   setRecordingLink({id, link})                     remember where the user put it in the cloud
+ *   deleteRecording({id})                            { removed: true | false (left in the gallery) }
+ *   openUrl({url})                                   opens a saved cloud link in the browser / Drive app
  */
 @CapacitorPlugin(
     name = "RemoteAgent",
@@ -110,7 +119,95 @@ public class AgentPlugin extends Plugin {
         r.put("audio", p.getBoolean("audio", false));
         r.put("batteryExempt", batteryExempt());
         r.put("version", BuildConfig.VERSION_NAME);
+        Recorder rec = NativeAgent.RECORDER;
+        r.put("recording", rec != null);
+        r.put("recordingSince", rec != null ? rec.since : 0);
+        r.put("recordingAudio", rec != null && rec.audio);
         call.resolve(r);
+    }
+
+    // ---- recordings -------------------------------------------------------------------------------------------
+
+    @PluginMethod
+    public void startRecording(PluginCall call) {
+        AgentService.startRecording(err -> {
+            if (err == null) call.resolve(); else call.reject(err);
+        });
+    }
+
+    @PluginMethod
+    public void stopRecording(PluginCall call) {
+        NativeAgent.stopRecording(null);
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void recordings(PluginCall call) {
+        JSObject r = new JSObject();
+        try { r.put("items", new com.getcapacitor.JSArray(Recordings.list(getContext()).toString())); }
+        catch (JSONException e) { call.reject(e.getMessage()); return; }
+        call.resolve(r);
+    }
+
+    private JSONObject recording(PluginCall call) {
+        String id = call.getString("id", "");
+        JSONObject it = Recordings.find(getContext(), id);
+        if (it == null) call.reject("This recording is no longer on the phone.");
+        return it;
+    }
+
+    @PluginMethod
+    public void playRecording(PluginCall call) {
+        JSONObject it = recording(call);
+        if (it == null) return;
+        try {
+            Intent i = new Intent(Intent.ACTION_VIEW).setDataAndType(Recordings.shareUri(getContext(), it), "video/mp4")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            getActivity().startActivity(i);
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("No video player found on this phone.");
+        }
+    }
+
+    @PluginMethod
+    public void shareRecording(PluginCall call) {
+        JSONObject it = recording(call);
+        if (it == null) return;
+        try {
+            Intent send = new Intent(Intent.ACTION_SEND).setType("video/mp4")
+                .putExtra(Intent.EXTRA_STREAM, Recordings.shareUri(getContext(), it))
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            getActivity().startActivity(Intent.createChooser(send, "Save or share the recording"));
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("Could not share: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void setRecordingLink(PluginCall call) {
+        Recordings.setLink(getContext(), call.getString("id", ""), call.getString("link", ""));
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void deleteRecording(PluginCall call) {
+        JSObject r = new JSObject();
+        r.put("removed", Recordings.delete(getContext(), call.getString("id", "")));
+        call.resolve(r);
+    }
+
+    @PluginMethod
+    public void openUrl(PluginCall call) {
+        String url = call.getString("url", "");
+        if (!url.startsWith("https://") && !url.startsWith("http://")) { call.reject("Not a web link."); return; }
+        try {
+            getActivity().startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("No app can open this link.");
+        }
     }
 
     @PluginMethod

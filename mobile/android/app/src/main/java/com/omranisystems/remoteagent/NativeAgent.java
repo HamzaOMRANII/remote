@@ -7,8 +7,8 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -49,33 +49,45 @@ import org.webrtc.audio.JavaAudioDeviceModule;
  *   viewer -> agent  signal { from, data:{kind:"request"} }  -> offer (camera track) -> answer -> ice both ways
  *
  * The camera only runs while at least one viewer is watching or the phone's own "Check camera" preview is open
- * (PreviewActivity). All state changes run on one thread.
+ * (PreviewActivity). Switching front/back happens in place (no reconnect).
+ *
+ * Stability rules (a crash here kills the whole app):
+ *   - every task runs on this agent's single thread through post(), which drops work once the agent is stopped
+ *     (late WebSocket / WebRTC callbacks) and logs instead of throwing;
+ *   - the EGL context and the PeerConnectionFactory live for the whole process: previews and a restarted agent
+ *     keep using them, nothing renders with a released context;
+ *   - previews are process-wide, so a restarted agent re-attaches them to its new camera track.
  */
 class NativeAgent {
     private static final String TAG = "RemoteAgent";
 
-    // read by AgentPlugin.status() / the notification
+    // read by AgentPlugin.status() / the notification / PreviewActivity
     static volatile String state = "stopped"; // stopped | connecting | online | error
     static volatile int watchers = 0;
     static volatile String lastError = "";
-    static volatile NativeAgent current; // the running agent, for PreviewActivity
+    static volatile boolean frontNow = false;
+    static volatile NativeAgent current; // the running agent
+
+    // process-wide WebRTC plumbing (created once, never disposed)
+    private static EglBase EGL;
+    private static PeerConnectionFactory FACTORY;
+    private static final Set<VideoSink> PREVIEWS = Collections.synchronizedSet(new HashSet<>());
 
     interface Listener { void onChanged(); }
 
     private final Context ctx;
     private final String wsUrl, httpBase, token, deviceId, deviceName;
-    private final boolean front, audio;
+    private final boolean audio;
+    private volatile boolean front;
     private final Listener listener;
 
     private final ExecutorService loop = Executors.newSingleThreadExecutor();
     private final OkHttpClient http = new OkHttpClient.Builder()
         .pingInterval(25, TimeUnit.SECONDS).connectTimeout(15, TimeUnit.SECONDS).build();
     private WebSocket ws;
-    private boolean running = true;
+    private volatile boolean running = true;
     private long retryMs = 1000;
 
-    private EglBase egl;
-    private PeerConnectionFactory factory;
     private CameraVideoCapturer capturer;
     private SurfaceTextureHelper textures;
     private VideoSource videoSource;
@@ -83,7 +95,6 @@ class NativeAgent {
     private AudioSource audioSource;
     private AudioTrack audioTrack;
     private final Map<String, PeerConnection> peers = new HashMap<>();
-    private final Set<VideoSink> previews = new HashSet<>();
 
     NativeAgent(Context ctx, String wsUrl, String token, String deviceId, String deviceName, boolean front, boolean audio, Listener l) {
         this.ctx = ctx.getApplicationContext();
@@ -97,58 +108,96 @@ class NativeAgent {
         this.listener = l;
     }
 
-    void start() { current = this; loop.execute(this::connect); }
+    /** Runs on the agent thread; silently dropped once stopped; never lets an exception kill the app. */
+    private void post(Runnable r) {
+        if (!running || loop.isShutdown()) return;
+        try {
+            loop.execute(() -> {
+                try { r.run(); } catch (Throwable t) { Log.e(TAG, "task failed", t); }
+            });
+        } catch (Throwable ignored) { /* shut down between the check and execute */ }
+    }
 
-    boolean isFront() { return front; }
+    private void changed() {
+        try { if (listener != null) listener.onChanged(); } catch (Throwable t) { Log.w(TAG, "listener", t); }
+    }
 
-    // ---- local preview ("Check camera") ---------------------------------------------------------------------
+    void start() {
+        current = this;
+        frontNow = front;
+        post(this::connect);
+        // a "Check camera" view left open across a restart: feed it from this agent's camera right away
+        if (!PREVIEWS.isEmpty()) post(() -> { ensureFactory(); startCamera(); });
+    }
+
+    /** Stops everything, then runs done (on the agent thread) — callers start a new agent only after that. */
+    void stop(Runnable done) {
+        if (!running || loop.isShutdown()) { if (done != null) done.run(); return; }
+        post(() -> {
+            if (current == this) current = null;
+            if (ws != null) ws.close(1000, "stopped");
+            for (PeerConnection pc : peers.values()) pc.dispose();
+            peers.clear();
+            stopCamera();
+            state = "stopped"; watchers = 0; lastError = "";
+            running = false; // from here on, late callbacks are dropped by post()
+            loop.shutdown();
+            changed();
+            if (done != null) {
+                try { done.run(); } catch (Throwable t) { Log.e(TAG, "after stop", t); }
+            }
+        });
+    }
+
+    private void setState(String s, int w, String err) {
+        state = s; watchers = w; if (err != null) lastError = err;
+        changed();
+    }
+
+    // ---- camera switch + local preview ("Check camera") -----------------------------------------------------
+
+    /** Front/back in place: viewers keep their connection and just see the other camera. */
+    void switchCamera(boolean toFront) {
+        post(() -> {
+            front = toFront;
+            frontNow = toFront;
+            if (capturer == null) return; // not capturing: the next start picks the new side
+            String name = pickCamera();
+            if (name == null) return;
+            capturer.switchCamera(new CameraVideoCapturer.CameraSwitchHandler() {
+                @Override public void onCameraSwitchDone(boolean isFront) { frontNow = isFront; }
+                @Override public void onCameraSwitchError(String e) { lastError = "camera switch: " + e; changed(); }
+            }, name);
+        });
+    }
 
     interface PreviewReady { void onReady(EglBase.Context egl); }
 
     /** Starts the camera if needed and hands back the EGL context the renderer must be initialised with. */
     void openPreview(PreviewReady ready) {
-        loop.execute(() -> {
+        post(() -> {
             ensureFactory();
-            if (!startCamera()) { ready.onReady(null); return; }
-            ready.onReady(egl.getEglBaseContext());
+            ready.onReady(startCamera() ? EGL.getEglBaseContext() : null);
         });
     }
 
     /** Call after the renderer is initialised with the context from openPreview(). */
-    void attachPreview(VideoSink sink) {
-        loop.execute(() -> { previews.add(sink); if (videoTrack != null) videoTrack.addSink(sink); });
+    static void attachPreview(VideoSink sink) {
+        PREVIEWS.add(sink);
+        NativeAgent a = current;
+        if (a != null) a.post(() -> { if (a.videoTrack != null) a.videoTrack.addSink(sink); });
     }
 
-    /** Detaches the renderer, releases the camera if nobody watches, then runs done (release the renderer there). */
-    void closePreview(VideoSink sink, Runnable done) {
-        if (loop.isShutdown()) { done.run(); return; }
-        loop.execute(() -> {
-            previews.remove(sink);
-            if (videoTrack != null) videoTrack.removeSink(sink);
-            if (peers.isEmpty() && previews.isEmpty()) stopCamera();
+    /** Detaches the renderer from whichever agent runs now, releases the camera if nobody watches, then runs done. */
+    static void closePreview(VideoSink sink, Runnable done) {
+        PREVIEWS.remove(sink);
+        NativeAgent a = current;
+        if (a == null || !a.running) { done.run(); return; }
+        a.post(() -> {
+            if (a.videoTrack != null) a.videoTrack.removeSink(sink);
+            if (a.peers.isEmpty() && PREVIEWS.isEmpty()) a.stopCamera();
             done.run();
         });
-    }
-
-    void stop() {
-        loop.execute(() -> {
-            running = false;
-            if (current == this) current = null;
-            previews.clear();
-            if (ws != null) ws.close(1000, "stopped");
-            for (PeerConnection pc : peers.values()) pc.close();
-            peers.clear();
-            stopCamera();
-            if (factory != null) { factory.dispose(); factory = null; }
-            if (egl != null) { egl.release(); egl = null; }
-            setState("stopped", 0, "");
-        });
-        loop.shutdown();
-    }
-
-    private void setState(String s, int w, String err) {
-        state = s; watchers = w; if (err != null) lastError = err;
-        if (listener != null) listener.onChanged();
     }
 
     // ---- signaling connection -------------------------------------------------------------------------------
@@ -158,7 +207,7 @@ class NativeAgent {
         setState("connecting", peers.size(), null);
         ws = http.newWebSocket(new Request.Builder().url(wsUrl).build(), new WebSocketListener() {
             @Override public void onOpen(WebSocket socket, Response response) {
-                loop.execute(() -> {
+                post(() -> {
                     try {
                         JSONObject dev = new JSONObject().put("id", deviceId).put("name", deviceName).put("platform", "android");
                         JSONArray caps = new JSONArray().put(new JSONObject().put("cap", "camera"));
@@ -166,16 +215,17 @@ class NativeAgent {
                     } catch (Exception e) { Log.w(TAG, "hello", e); }
                 });
             }
-            @Override public void onMessage(WebSocket socket, String text) { loop.execute(() -> onMessageText(text)); }
-            @Override public void onClosed(WebSocket socket, int code, String reason) { loop.execute(() -> onDrop(code, reason)); }
-            @Override public void onFailure(WebSocket socket, Throwable t, Response r) { loop.execute(() -> onDrop(0, t.getMessage())); }
+            @Override public void onMessage(WebSocket socket, String text) { post(() -> onMessageText(text)); }
+            @Override public void onClosed(WebSocket socket, int code, String reason) { post(() -> onDrop(socket, code, reason)); }
+            @Override public void onFailure(WebSocket socket, Throwable t, Response r) { post(() -> onDrop(socket, 0, t.getMessage())); }
         });
     }
 
-    private void onDrop(int code, String reason) {
-        for (PeerConnection pc : peers.values()) pc.close();
+    private void onDrop(WebSocket socket, int code, String reason) {
+        if (socket != ws) return; // an older socket closing late
+        for (PeerConnection pc : peers.values()) pc.dispose();
         peers.clear();
-        if (previews.isEmpty()) stopCamera(); // an open preview keeps the camera while we reconnect
+        if (PREVIEWS.isEmpty()) stopCamera(); // an open preview keeps the camera while we reconnect
         if (!running) return;
         if (code == 4003) { // credentials rejected: retrying would only hit the rate limit
             setState("error", 0, "Access rejected — pair this device again from the dashboard.");
@@ -184,10 +234,12 @@ class NativeAgent {
         setState("connecting", 0, reason == null ? "" : reason);
         long wait = retryMs;
         retryMs = Math.min(retryMs * 2, 15000);
-        new Thread(() -> {
+        Thread t = new Thread(() -> {
             try { Thread.sleep(wait); } catch (InterruptedException ignored) {}
-            if (!loop.isShutdown()) loop.execute(this::connect);
-        }).start();
+            post(this::connect);
+        });
+        t.setDaemon(true);
+        t.start();
     }
 
     private void send(JSONObject o) { if (ws != null) ws.send(o.toString()); }
@@ -217,7 +269,7 @@ class NativeAgent {
         String kind = data.optString("kind");
         PeerConnection pc = peers.get(from);
         if ("request".equals(kind)) {
-            if (pc != null) { pc.close(); peers.remove(from); }
+            if (pc != null) { peers.remove(from); pc.dispose(); }
             openPeer(from);
         } else if ("answer".equals(kind) && pc != null) {
             JSONObject sdp = data.getJSONObject("sdp");
@@ -235,7 +287,7 @@ class NativeAgent {
             if (!startCamera()) { replyError(viewer, lastError); return; }
             PeerConnection.RTCConfiguration cfg = new PeerConnection.RTCConfiguration(fetchIceServers());
             cfg.sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN;
-            PeerConnection pc = factory.createPeerConnection(cfg, new PeerObserver(viewer));
+            PeerConnection pc = FACTORY.createPeerConnection(cfg, new PeerObserver(viewer));
             if (pc == null) { replyError(viewer, "could not create the connection"); return; }
             pc.addTrack(videoTrack, Collections.singletonList("cam"));
             if (audioTrack != null) pc.addTrack(audioTrack, Collections.singletonList("cam"));
@@ -243,7 +295,8 @@ class NativeAgent {
             setState(state, peers.size(), null);
             pc.createOffer(new Sdp("offer") {
                 @Override public void onCreateSuccess(SessionDescription desc) {
-                    loop.execute(() -> {
+                    post(() -> {
+                        if (peers.get(viewer) != pc) return; // replaced or closed meanwhile
                         pc.setLocalDescription(new Sdp("local"), desc);
                         try {
                             JSONObject sdp = new JSONObject().put("type", desc.type.canonicalForm()).put("sdp", desc.description);
@@ -265,8 +318,8 @@ class NativeAgent {
 
     private void closePeer(String viewer) {
         PeerConnection pc = peers.remove(viewer);
-        if (pc != null) pc.close();
-        if (peers.isEmpty() && previews.isEmpty()) stopCamera(); // nobody watching: release the camera (battery, privacy indicator)
+        if (pc != null) pc.dispose();
+        if (peers.isEmpty() && PREVIEWS.isEmpty()) stopCamera(); // nobody watching: release the camera (battery, privacy indicator)
         setState(state, peers.size(), null);
     }
 
@@ -292,42 +345,48 @@ class NativeAgent {
     }
 
     private void ensureFactory() {
-        if (factory != null) return;
-        PeerConnectionFactory.initialize(PeerConnectionFactory.InitializationOptions.builder(ctx).createInitializationOptions());
-        egl = EglBase.create();
-        factory = PeerConnectionFactory.builder()
-            .setVideoEncoderFactory(new DefaultVideoEncoderFactory(egl.getEglBaseContext(), true, true))
-            .setVideoDecoderFactory(new DefaultVideoDecoderFactory(egl.getEglBaseContext()))
-            .setAudioDeviceModule(JavaAudioDeviceModule.builder(ctx).createAudioDeviceModule())
-            .createPeerConnectionFactory();
+        synchronized (NativeAgent.class) {
+            if (FACTORY != null) return;
+            PeerConnectionFactory.initialize(PeerConnectionFactory.InitializationOptions.builder(ctx).createInitializationOptions());
+            EGL = EglBase.create();
+            FACTORY = PeerConnectionFactory.builder()
+                .setVideoEncoderFactory(new DefaultVideoEncoderFactory(EGL.getEglBaseContext(), true, true))
+                .setVideoDecoderFactory(new DefaultVideoDecoderFactory(EGL.getEglBaseContext()))
+                .setAudioDeviceModule(JavaAudioDeviceModule.builder(ctx).createAudioDeviceModule())
+                .createPeerConnectionFactory();
+        }
+    }
+
+    private String pickCamera() {
+        Camera2Enumerator cams = new Camera2Enumerator(ctx);
+        for (String name : cams.getDeviceNames()) {
+            if (front ? cams.isFrontFacing(name) : cams.isBackFacing(name)) return name;
+        }
+        return cams.getDeviceNames().length > 0 ? cams.getDeviceNames()[0] : null;
     }
 
     private boolean startCamera() {
         if (videoTrack != null) return true;
-        Camera2Enumerator cams = new Camera2Enumerator(ctx);
-        String pick = null;
-        for (String name : cams.getDeviceNames()) {
-            if (front ? cams.isFrontFacing(name) : cams.isBackFacing(name)) { pick = name; break; }
-        }
-        if (pick == null && cams.getDeviceNames().length > 0) pick = cams.getDeviceNames()[0];
+        String pick = pickCamera();
         if (pick == null) { lastError = "no camera on this device"; return false; }
-        capturer = cams.createCapturer(pick, new CameraVideoCapturer.CameraEventsHandler() {
-            @Override public void onCameraError(String e) { lastError = "camera: " + e; if (listener != null) listener.onChanged(); }
-            @Override public void onCameraDisconnected() { lastError = "camera taken by another app"; if (listener != null) listener.onChanged(); }
+        capturer = new Camera2Enumerator(ctx).createCapturer(pick, new CameraVideoCapturer.CameraEventsHandler() {
+            @Override public void onCameraError(String e) { lastError = "camera: " + e; changed(); }
+            @Override public void onCameraDisconnected() { lastError = "camera taken by another app"; changed(); }
             @Override public void onCameraFreezed(String e) { lastError = "camera froze: " + e; }
             @Override public void onCameraOpening(String name) {}
             @Override public void onFirstFrameAvailable() { lastError = ""; }
             @Override public void onCameraClosed() {}
         });
-        textures = SurfaceTextureHelper.create("RemoteCapture", egl.getEglBaseContext());
-        videoSource = factory.createVideoSource(false);
+        textures = SurfaceTextureHelper.create("RemoteCapture", EGL.getEglBaseContext());
+        videoSource = FACTORY.createVideoSource(false);
         capturer.initialize(textures, ctx, videoSource.getCapturerObserver());
         capturer.startCapture(1280, 720, 30);
-        videoTrack = factory.createVideoTrack("cam0", videoSource);
-        for (VideoSink sink : previews) videoTrack.addSink(sink);
+        frontNow = front;
+        videoTrack = FACTORY.createVideoTrack("cam0", videoSource);
+        synchronized (PREVIEWS) { for (VideoSink sink : PREVIEWS) videoTrack.addSink(sink); }
         if (audio) {
-            audioSource = factory.createAudioSource(new MediaConstraints());
-            audioTrack = factory.createAudioTrack("mic0", audioSource);
+            audioSource = FACTORY.createAudioSource(new MediaConstraints());
+            audioTrack = FACTORY.createAudioTrack("mic0", audioSource);
         }
         return true;
     }
@@ -337,7 +396,10 @@ class NativeAgent {
             try { capturer.stopCapture(); } catch (InterruptedException ignored) {}
             capturer.dispose(); capturer = null;
         }
-        if (videoTrack != null) { videoTrack.dispose(); videoTrack = null; }
+        if (videoTrack != null) {
+            synchronized (PREVIEWS) { for (VideoSink sink : PREVIEWS) videoTrack.removeSink(sink); }
+            videoTrack.dispose(); videoTrack = null;
+        }
         if (videoSource != null) { videoSource.dispose(); videoSource = null; }
         if (audioTrack != null) { audioTrack.dispose(); audioTrack = null; }
         if (audioSource != null) { audioSource.dispose(); audioSource = null; }
@@ -351,7 +413,7 @@ class NativeAgent {
         PeerObserver(String viewer) { this.viewer = viewer; }
 
         @Override public void onIceCandidate(IceCandidate c) {
-            loop.execute(() -> {
+            post(() -> {
                 try {
                     JSONObject cand = new JSONObject().put("candidate", c.sdp).put("sdpMid", c.sdpMid).put("sdpMLineIndex", c.sdpMLineIndex);
                     signal(viewer, new JSONObject().put("kind", "ice").put("candidate", cand));
@@ -361,7 +423,7 @@ class NativeAgent {
         @Override public void onConnectionChange(PeerConnection.PeerConnectionState s) {
             if (s == PeerConnection.PeerConnectionState.FAILED || s == PeerConnection.PeerConnectionState.DISCONNECTED
                 || s == PeerConnection.PeerConnectionState.CLOSED) {
-                loop.execute(() -> { if (peers.containsKey(viewer)) closePeer(viewer); });
+                post(() -> { if (peers.containsKey(viewer)) closePeer(viewer); });
             }
         }
         @Override public void onSignalingChange(PeerConnection.SignalingState s) {}

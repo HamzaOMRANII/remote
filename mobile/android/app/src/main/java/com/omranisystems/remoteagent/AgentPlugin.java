@@ -23,6 +23,7 @@ import java.util.List;
  * Remote control for AgentService, called by the /connect page (window.Capacitor.Plugins.RemoteAgent):
  *   share({server, token, id, name, front, audio})  asks for permissions, then streams natively in the background
  *   stop()                                           ends sharing
+ *   setCamera({front})                               switches camera in place while sharing
  *   preview()                                        full-screen live view of what the dashboard sees
  *   status()                                         { sharing, state, watchers, error, front, audio, batteryExempt, version }
  *   batteryExemption()                               Android's "ignore battery optimisations" prompt
@@ -77,6 +78,13 @@ public class AgentPlugin extends Plugin {
     public void stop(PluginCall call) {
         Intent i = new Intent(getContext(), AgentService.class).setAction(AgentService.ACTION_STOP);
         try { getContext().startService(i); } catch (Exception e) { getContext().stopService(new Intent(getContext(), AgentService.class)); }
+        call.resolve();
+    }
+
+    /** Front/back camera while sharing, in place (viewers stay connected). */
+    @PluginMethod
+    public void setCamera(PluginCall call) {
+        AgentService.switchCamera(getContext(), Boolean.TRUE.equals(call.getBoolean("front", false)));
         call.resolve();
     }
 

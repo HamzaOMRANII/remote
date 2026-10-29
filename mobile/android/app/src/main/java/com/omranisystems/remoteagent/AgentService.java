@@ -32,8 +32,9 @@ public class AgentService extends Service {
     static final String PREFS = "remote_agent";
 
     static volatile boolean active = false;
+    private static volatile AgentService instance;
 
-    private NativeAgent agent;
+    private volatile NativeAgent agent;
     private PowerManager.WakeLock cpu;
     private WifiManager.WifiLock wifi;
     private String name = "";
@@ -79,12 +80,27 @@ public class AgentService extends Service {
         }
         holdLocks();
 
-        if (agent != null) agent.stop(); // restart with the new settings
-        agent = new NativeAgent(this, prefs.getString("server", ""), prefs.getString("token", ""),
-            prefs.getString("id", ""), name, prefs.getBoolean("front", false), audio, this::refreshNotification);
-        agent.start();
         active = true;
+        instance = this;
+        // Restart with the new settings — but only once the old agent has fully let go of the camera
+        NativeAgent old = agent;
+        agent = null;
+        Runnable fresh = () -> {
+            if (!active) return; // stopped while the old agent was shutting down
+            NativeAgent a = new NativeAgent(this, prefs.getString("server", ""), prefs.getString("token", ""),
+                prefs.getString("id", ""), name, prefs.getBoolean("front", false), audio, this::refreshNotification);
+            agent = a;
+            a.start();
+        };
+        if (old != null) old.stop(fresh); else fresh.run();
         return START_STICKY;
+    }
+
+    /** Front/back camera without restarting: the running agent switches in place; the choice is remembered. */
+    static void switchCamera(Context ctx, boolean front) {
+        ctx.getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("front", front).apply();
+        AgentService s = instance;
+        if (s != null && s.agent != null) s.agent.switchCamera(front);
     }
 
     private NotificationManager channel() {
@@ -145,7 +161,9 @@ public class AgentService extends Service {
     }
 
     private void refreshNotification() {
-        if (active) channel().notify(ID, buildNotification());
+        try {
+            if (active) channel().notify(ID, buildNotification());
+        } catch (Throwable ignored) { /* never let a notification update crash the service */ }
     }
 
     private void askToResume() {
@@ -178,7 +196,8 @@ public class AgentService extends Service {
 
     private void shutdown() {
         active = false;
-        if (agent != null) { agent.stop(); agent = null; }
+        if (instance == this) instance = null;
+        if (agent != null) { agent.stop(null); agent = null; }
         if (cpu != null && cpu.isHeld()) cpu.release();
         if (wifi != null && wifi.isHeld()) wifi.release();
     }

@@ -17,6 +17,7 @@ export default function NativeShare({ cred, onForget }) {
     try {
       const s = await ra.status();
       setSt(s);
+      if (s.sharing) setFront(!!s.front); // follows a switch made from the Check camera screen
       return s;
     } catch { return null; }
   }
@@ -46,11 +47,18 @@ export default function NativeShare({ cred, onForget }) {
     setTimeout(refresh, 400);
     setBusy(false);
   }
-  // changing the camera or audio while sharing restarts the service with the new settings
+  // While sharing: the camera switches in place (viewers stay connected); audio needs a
+  // restart because Android grants the microphone when the service starts.
   function change(next) {
-    if (next.front !== undefined) setFront(next.front);
-    if (next.audio !== undefined) setAudio(next.audio);
-    if (st && st.sharing) share(next);
+    if (next.front !== undefined) {
+      if (next.front === front) return;
+      setFront(next.front);
+      if (st && st.sharing) ra.setCamera({ front: next.front }).catch((e) => setErr(e.message));
+    }
+    if (next.audio !== undefined) {
+      setAudio(next.audio);
+      if (st && st.sharing) share({ audio: next.audio });
+    }
   }
   // full-screen native view of exactly what the dashboard receives
   async function checkCamera() {

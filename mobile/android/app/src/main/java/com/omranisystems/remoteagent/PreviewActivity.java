@@ -5,35 +5,65 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 import org.webrtc.RendererCommon;
 import org.webrtc.SurfaceViewRenderer;
 
 /**
- * "Check camera": full-screen live view of the exact track the dashboard receives, on the phone itself.
- * Opened from the app's sharing screen; only while sharing (it renders the running NativeAgent's camera).
- * Closing it releases the camera again when nobody is watching.
+ * "Check camera": full-screen live view of the exact track the dashboard receives, on the phone itself, with a
+ * Switch camera button. Opened from the app's sharing screen, only while sharing.
+ *
+ * The renderer uses NativeAgent's process-wide EGL context and is registered as a process-wide preview, so it
+ * survives the agent restarting underneath it (it is re-attached to the new camera track). Closing releases the
+ * camera again when nobody is watching.
  */
 public class PreviewActivity extends Activity {
     private SurfaceViewRenderer renderer;
-    private NativeAgent agent;
     private boolean attached;
     private volatile boolean closed;
+    private final Handler ui = new Handler(Looper.getMainLooper());
+    private Boolean mirrored;
 
     private int dp(int v) {
         return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, getResources().getDisplayMetrics());
     }
 
+    private Button pillButton(String text, boolean primary) {
+        Button b = new Button(this);
+        b.setText(text);
+        b.setAllCaps(false);
+        b.setTextColor(Color.parseColor(primary ? "#050B14" : "#EAF0F6"));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(Color.parseColor(primary ? "#2FD1D9" : "#B3050B14"));
+        bg.setCornerRadius(dp(12));
+        if (!primary) bg.setStroke(dp(1), Color.parseColor("#4D8BA8C4"));
+        b.setBackground(bg);
+        return b;
+    }
+
+    // keeps the mirror in step with the camera side (front = mirror), e.g. after Switch camera
+    private final Runnable syncMirror = new Runnable() {
+        @Override public void run() {
+            if (closed) return;
+            boolean m = NativeAgent.frontNow;
+            if (attached && (mirrored == null || mirrored != m)) { renderer.setMirror(m); mirrored = m; }
+            ui.postDelayed(this, 300);
+        }
+    };
+
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
-        agent = NativeAgent.current;
+        NativeAgent agent = NativeAgent.current;
         if (agent == null) {
             Toast.makeText(this, "Start sharing first", Toast.LENGTH_SHORT).show();
             finish();
@@ -60,18 +90,24 @@ public class PreviewActivity extends Activity {
         lp.topMargin = dp(44);
         root.addView(label, lp);
 
-        Button close = new Button(this);
-        close.setText("Close");
-        close.setAllCaps(false);
-        close.setTextColor(Color.parseColor("#050B14"));
-        GradientDrawable btn = new GradientDrawable();
-        btn.setColor(Color.parseColor("#2FD1D9"));
-        btn.setCornerRadius(dp(12));
-        close.setBackground(btn);
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setGravity(Gravity.CENTER);
+        Button flip = pillButton("Switch camera", false);
+        Button close = pillButton("Close", true);
+        flip.setOnClickListener(v -> {
+            AgentService.switchCamera(this, !NativeAgent.frontNow);
+            flip.setEnabled(false); // debounce: a switch takes a moment
+            ui.postDelayed(() -> flip.setEnabled(true), 1200);
+        });
         close.setOnClickListener(v -> finish());
-        FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(dp(180), dp(50), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(dp(150), dp(50));
+        blp.setMargins(dp(8), 0, dp(8), 0);
+        bar.addView(flip, blp);
+        bar.addView(close, new LinearLayout.LayoutParams(blp));
+        FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
         bp.bottomMargin = dp(48);
-        root.addView(close, bp);
+        root.addView(bar, bp);
 
         setContentView(root);
 
@@ -84,19 +120,20 @@ public class PreviewActivity extends Activity {
             }
             renderer.init(egl, null);
             renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT);
-            renderer.setMirror(agent.isFront()); // front camera: show it like a mirror, as people expect
-            agent.attachPreview(renderer);
+            NativeAgent.attachPreview(renderer);
             attached = true;
+            ui.post(syncMirror);
         }));
     }
 
     @Override
     protected void onDestroy() {
         closed = true;
-        if (agent != null && renderer != null) {
+        ui.removeCallbacksAndMessages(null);
+        if (renderer != null) {
             SurfaceViewRenderer r = renderer;
             boolean init = attached;
-            agent.closePreview(r, () -> runOnUiThread(() -> { if (init) r.release(); }));
+            NativeAgent.closePreview(r, () -> runOnUiThread(() -> { if (init) r.release(); }));
         }
         super.onDestroy();
     }

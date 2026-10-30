@@ -18,6 +18,7 @@
 // expire after 10 minutes, and one device has at most one open code.
 
 const fs = require('node:fs');
+const { writeJson } = require('./jsonfile');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
@@ -59,7 +60,7 @@ function create(cfg, root) {
   let devices = [];
   const pairings = new Map(); // normalized code -> { id, expiresAt }
 
-  function save() { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file, JSON.stringify(devices, null, 2) + '\n'); }
+  function save() { writeJson(file, devices); }
   function load() {
     try { devices = JSON.parse(fs.readFileSync(file, 'utf8')); if (!Array.isArray(devices)) devices = []; }
     catch { devices = []; }

@@ -12,7 +12,7 @@
 
 const crypto = require('node:crypto');
 
-function createRegistry() {
+function createRegistry(events = {}) {
   const agents = new Map();      // deviceId -> { ws, device, capabilities, since }
   const viewers = new Set();     // Set<ws>
   const viewersById = new Map(); // viewerId -> ws
@@ -77,14 +77,17 @@ function createRegistry() {
     ws._deviceId = device.id;
     console.log(`[registry] agent online: ${device.id} (${capabilities.map((c) => c.cap).join(', ')})`);
     broadcastDevices();
+    try { events.online?.(device); } catch (e) { console.error('[registry] online hook', e); }
   }
 
   function removeAgent(ws) {
     const id = ws._deviceId;
     if (id && agents.get(id)?.ws === ws) {
-      agents.delete(id);
+      const { device } = agents.get(id) || {};
       console.log(`[registry] agent offline: ${id}`);
+      agents.delete(id);
       broadcastDevices();
+      try { if (device) events.offline?.(device); } catch (e) { console.error('[registry] offline hook', e); }
     }
     for (const [rid, p] of pending) {
       if (p.device === id) {

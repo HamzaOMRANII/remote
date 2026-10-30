@@ -402,3 +402,13 @@ a.btn:hover{ filter: brightness(1.08); }
 .rec-link-edit button{ padding: 6px 12px; font-size: 13px; }
 .rec-link{ display: block; width: 100%; margin-top: 10px; padding: 0; background: none; border: none; text-align: left;
   color: var(--petrol-bright); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- in-app update (Android app) ---------- */
+.update-bar{ position: fixed; left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); z-index: 50;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 14px; border-radius: 14px;
+  background: var(--navy-900); border: 1px solid color-mix(in srgb, var(--petrol-bright) 45%, transparent);
+  box-shadow: 0 10px 30px rgba(0,0,0,.45); font-size: 14px; }
+.update-text{ flex: 1; min-width: 180px; }
+.update-bar button{ padding: 8px 14px; font-size: 13px; }
+.update-progress{ height: 4px; margin-top: 8px; border-radius: 2px; background: var(--navy-line); overflow: hidden; }
+.update-progress span{ display: block; height: 100%; background: var(--petrol-bright); transition: width .3s; }

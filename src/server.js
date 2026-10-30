@@ -25,12 +25,14 @@ const api = require('./server/api');
 const { createRegistry } = require('./server/registry');
 const { attach } = require('./server/wss');
 const { sendText } = require('./server/http-util');
+const alertsFactory = require('./server/alerts');
 
 const cfg = load();
 const users = usersFactory.create(cfg, ROOT);
 const devices = devicesFactory.create(cfg, ROOT);
 const auth = authFactory.create(cfg, users);
-const registry = createRegistry();
+const alerts = alertsFactory.create(cfg, ROOT, devices);
+const registry = createRegistry({ online: alerts.online, offline: alerts.offline });
 
 const PORT = cfg.server.port || 16010;
 const HOST = cfg.server.host || '127.0.0.1';
@@ -83,7 +85,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname.startsWith('/api/')) {
     try {
-      await api.handle(req, res, pathname, { auth, users, devices, registry, cfg });
+      await api.handle(req, res, pathname, { auth, users, devices, registry, cfg, alerts });
     } catch (err) {
       console.error('[remote] api error:', err.message);
       if (!res.headersSent) sendText(res, 500, 'Internal error');

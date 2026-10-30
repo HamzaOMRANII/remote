@@ -291,6 +291,11 @@ https://claude.ai/artifact/JXwsnCcobFmRzHGix8mra2
 
 ## 10. Change log
 
+- **2026-10-30** — M6 polish: app 1.7.0 updates itself (banner + checked download + Android installer) and
+  resumes sharing after a phone restart / app update (automatic on Android ≤10; "tap to resume" on 11+, the app
+  resumes when opened). Server: device online/offline email alerts (Account page, admin; wait time, per-device,
+  flood limits; SMTP in config.json → "smtp"), atomic saves of data/*.json with 14 days of daily history
+  (data/history). Server-wide nightly backup (system_documentation/ops/omrani-backup.sh) already covers data/.
 - **2026-10-30** — Android app 1.6.0: **recording on the phone**. Record button (app + Check camera +
   notification Stop) saves what the dashboard sees (+ sound when Share audio is on) as MP4 in Gallery ›
   Movies/Remote, 5-minute parts, also with the app closed. Nothing goes to the server: Share sends a file to

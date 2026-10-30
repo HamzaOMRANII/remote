@@ -14,6 +14,7 @@
 // The last accepted TOTP step is remembered so a code can't be replayed.
 
 const fs = require('node:fs');
+const { writeJson } = require('./jsonfile');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
@@ -57,10 +58,7 @@ function create(cfg, root) {
   const file = path.join(dir, 'users.json');
   let users = [];
 
-  function save() {
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(file, JSON.stringify(users, null, 2) + '\n');
-  }
+  function save() { writeJson(file, users); }
 
   function load() {
     try {

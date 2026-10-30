@@ -52,4 +52,9 @@ export const api = {
   pairDevice: (id) => req('POST', `/api/devices/${encodeURIComponent(id)}/pair`),
   cancelPairing: (id) => req('DELETE', `/api/devices/${encodeURIComponent(id)}/pair`),
   claimPairing: (code) => req('POST', '/api/pair/claim', { code }),
+
+  // device online/offline email alerts (admin only)
+  alerts: () => req('GET', '/api/alerts'),
+  saveAlerts: (patch) => req('PUT', '/api/alerts', patch),
+  testAlert: () => req('POST', '/api/alerts/test'),
 };

@@ -116,8 +116,10 @@ public class AgentService extends Service {
         a.startRecording(result);
     }
 
-    private NotificationManager channel() {
-        NotificationManager nm = getSystemService(NotificationManager.class);
+    private NotificationManager channel() { return channel(this); }
+
+    private static NotificationManager channel(Context ctx) {
+        NotificationManager nm = ctx.getSystemService(NotificationManager.class);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && nm.getNotificationChannel(CHANNEL) == null) {
             NotificationChannel ch = new NotificationChannel(CHANNEL, "Camera sharing", NotificationManager.IMPORTANCE_LOW);
             ch.setDescription("Shown while this phone shares its camera with Remote");
@@ -127,10 +129,12 @@ public class AgentService extends Service {
         return nm;
     }
 
-    private PendingIntent openApp() {
-        Intent open = getPackageManager().getLaunchIntentForPackage(getPackageName());
+    private PendingIntent openApp() { return openApp(this); }
+
+    private static PendingIntent openApp(Context ctx) {
+        Intent open = ctx.getPackageManager().getLaunchIntentForPackage(ctx.getPackageName());
         if (open != null) open.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
-        return PendingIntent.getActivity(this, 0, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        return PendingIntent.getActivity(ctx, 0, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
     }
 
     private Notification buildNotification() {
@@ -186,15 +190,26 @@ public class AgentService extends Service {
     }
 
     private void askToResume() {
-        Notification n = new NotificationCompat.Builder(this, CHANNEL)
-            .setSmallIcon(android.R.drawable.presence_video_away)
-            .setColor(0xFFC9A24D)
-            .setContentTitle("Remote · sharing paused")
-            .setContentText("Android stopped the camera. Tap to resume.")
-            .setAutoCancel(true)
-            .setContentIntent(openApp())
-            .build();
-        channel().notify(ID + 1, n);
+        notifyResume(this, "Remote · sharing paused", "Android stopped the camera. Tap to resume.");
+    }
+
+    /** "Tap to resume" — opening the app resumes sharing (MainActivity.onResume). */
+    static void notifyResume(Context ctx, String title, String text) {
+        try {
+            Notification n = new NotificationCompat.Builder(ctx, CHANNEL)
+                .setSmallIcon(android.R.drawable.presence_video_away)
+                .setColor(0xFFC9A24D)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setAutoCancel(true)
+                .setContentIntent(openApp(ctx))
+                .build();
+            channel(ctx).notify(ID + 1, n);
+        } catch (Throwable ignored) { /* e.g. notifications not allowed */ }
+    }
+
+    static void clearResumeNotice(Context ctx) {
+        try { channel(ctx).cancel(ID + 1); } catch (Throwable ignored) {}
     }
 
     private void holdLocks() {

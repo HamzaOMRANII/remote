@@ -54,7 +54,7 @@ function turnCredentials(turn) {
   };
 }
 
-async function handle(req, res, pathname, { auth, users, devices, registry, cfg }) {
+async function handle(req, res, pathname, { auth, users, devices, registry, cfg, alerts }) {
   // GET /api/ice — WebRTC ICE servers (STUN always; TURN if configured in
   // config.server.turn). Public: the browser agent needs it before human login.
   if (pathname === '/api/ice' && req.method === 'GET') {
@@ -222,6 +222,23 @@ async function handle(req, res, pathname, { auth, users, devices, registry, cfg 
       token: got.token,
       device: { id: got.device.id, name: got.device.label },
     });
+  }
+
+  // ---- device online/offline email alerts (admin only) ----
+  if (pathname === '/api/alerts' || pathname === '/api/alerts/test') {
+    if (!auth.isAuthed(req)) return sendJson(res, 401, { error: 'unauthorized' });
+    if (!auth.isAdmin(req)) return sendJson(res, 403, { error: 'admin only' });
+    if (pathname === '/api/alerts' && req.method === 'GET') return sendJson(res, 200, { alerts: alerts.settings() });
+    if (pathname === '/api/alerts' && req.method === 'PUT') {
+      const body = await readJsonBody(req).catch(() => null) || {};
+      try { return sendJson(res, 200, { alerts: alerts.update(body) }); }
+      catch (e) { return sendJson(res, 400, { error: e.message }); }
+    }
+    if (pathname === '/api/alerts/test' && req.method === 'POST') {
+      const r = await alerts.test();
+      return sendJson(res, r.ok ? 200 : 502, r.ok ? { ok: true } : { error: r.error });
+    }
+    return sendJson(res, 405, { error: 'method not allowed' });
   }
 
   // ---- user CRUD (admin only) ----

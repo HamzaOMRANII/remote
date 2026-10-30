@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import Background from '../components/Background.jsx';
 import TopBar from '../components/TopBar.jsx';
 import QrCode from '../components/QrCode.jsx';
+import AlertsPanel from '../components/AlertsPanel.jsx';
 import { api } from '../api.js';
 
 // The signed-in user's own account: change password, turn 2FA on/off, and
@@ -180,13 +181,14 @@ export default function Account({ me }) {
           <h1 style={{ fontFamily: 'var(--font-mark)', fontSize: 24, margin: 0 }}>
             Account <span className="h2-sub muted">{me.username}</span>
           </h1>
-          <p className="rem-sub" style={{ marginTop: 6 }}>Your password and two-factor sign-in.</p>
+          <p className="rem-sub" style={{ marginTop: 6 }}>Your password and two-factor sign-in{me.role === 'admin' ? ', and device alerts' : ''}.</p>
         </div>
         {err && <p className="login-err" style={{ minHeight: 0 }}>{err}</p>}
         {user && user.recoveryLeft === 0 && user.twoFactor && (
           <p className="ctl-note err">You have no recovery codes left — generate new ones below.</p>
         )}
         {user ? <><TwoFactor user={user} onChanged={load} /><PasswordForm /></> : !err && <p className="muted">Loading…</p>}
+        {me.role === 'admin' && <AlertsPanel />}
       </main>
     </>
   );

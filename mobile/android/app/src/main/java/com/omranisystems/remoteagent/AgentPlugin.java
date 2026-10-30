@@ -16,6 +16,10 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -36,6 +40,8 @@ import java.util.List;
  *   setRecordingLink({id, link})                     remember where the user put it in the cloud
  *   deleteRecording({id})                            { removed: true | false (left in the gallery) }
  *   openUrl({url})                                   opens a saved cloud link in the browser / Drive app
+ *   installUpdate({url, sha256})                     downloads the new APK, checks it, opens Android's installer
+ *   updateProgress()                                 { progress: -1 idle | 0-100 downloading }
  */
 @CapacitorPlugin(
     name = "RemoteAgent",
@@ -196,6 +202,72 @@ public class AgentPlugin extends Plugin {
         JSObject r = new JSObject();
         r.put("removed", Recordings.delete(getContext(), call.getString("id", "")));
         call.resolve(r);
+    }
+
+    // ---- self-update ------------------------------------------------------------------------------------------
+
+    private static volatile int updateProgress = -1;
+
+    @PluginMethod
+    public void updateProgress(PluginCall call) {
+        JSObject r = new JSObject();
+        r.put("progress", updateProgress);
+        call.resolve(r);
+    }
+
+    /** Android always asks the user to confirm; the first time it also asks to allow installs from Remote. */
+    @PluginMethod
+    public void installUpdate(PluginCall call) {
+        String url = call.getString("url", "");
+        String sha = call.getString("sha256", "").toLowerCase(java.util.Locale.US);
+        if (!url.startsWith("https://")) { call.reject("Bad update link."); return; }
+        if (updateProgress >= 0) { call.reject("The update is already downloading."); return; }
+        if (Build.VERSION.SDK_INT >= 26 && !getContext().getPackageManager().canRequestPackageInstalls()) {
+            Intent i = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getContext().getPackageName()));
+            getActivity().startActivity(i);
+            call.reject("Allow \"Install unknown apps\" for Remote, come back, then tap Update again.", "permission");
+            return;
+        }
+        updateProgress = 0;
+        new Thread(() -> {
+            File dir = new File(getContext().getCacheDir(), "updates");
+            File apk = new File(dir, "remote-update.apk");
+            try {
+                //noinspection ResultOfMethodCallIgnored
+                dir.mkdirs();
+                okhttp3.OkHttpClient http = new okhttp3.OkHttpClient();
+                MessageDigest md = MessageDigest.getInstance("SHA-256");
+                try (okhttp3.Response r = http.newCall(new okhttp3.Request.Builder().url(url).build()).execute()) {
+                    if (!r.isSuccessful() || r.body() == null) throw new Exception("download failed (" + r.code() + ")");
+                    long total = r.body().contentLength();
+                    try (InputStream in = r.body().byteStream(); FileOutputStream out = new FileOutputStream(apk)) {
+                        byte[] buf = new byte[64 * 1024];
+                        long done = 0;
+                        int n;
+                        while ((n = in.read(buf)) > 0) {
+                            out.write(buf, 0, n);
+                            md.update(buf, 0, n);
+                            done += n;
+                            if (total > 0) updateProgress = (int) Math.min(99, done * 100 / total);
+                        }
+                    }
+                }
+                StringBuilder hex = new StringBuilder();
+                for (byte b : md.digest()) hex.append(String.format("%02x", b));
+                if (!sha.isEmpty() && !sha.contentEquals(hex)) throw new Exception("the download is damaged, try again");
+                Uri uri = androidx.core.content.FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", apk);
+                Intent install = new Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+                getContext().startActivity(install);
+                call.resolve();
+            } catch (Throwable t) {
+                //noinspection ResultOfMethodCallIgnored
+                apk.delete();
+                call.reject("Update failed: " + t.getMessage());
+            } finally {
+                updateProgress = -1;
+            }
+        }, "RemoteUpdate").start();
     }
 
     @PluginMethod

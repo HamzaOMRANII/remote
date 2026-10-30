@@ -10,5 +10,14 @@
       "secret": "coturn-static-auth-secret",
       "ttlSeconds": 3600
     }
-  }
+  },
+  "smtp": {
+    "host": "smtp.gmail.com",
+    "port": 465,
+    "secure": true,
+    "user": "",
+    "pass": "",
+    "from": "Remote <you@gmail.com>"
+  },
+  "timeZone": "Asia/Ho_Chi_Minh"
 }

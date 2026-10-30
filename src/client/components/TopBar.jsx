@@ -1,13 +1,14 @@
 import { api } from '../api.js';
 import { go } from '../router.js';
 import { usePath } from '../router.js';
-import { APK_URL, isNative } from '../native.js';
+import { isNative, useLatestApk } from '../native.js';
 
 // Sticky blurred topbar with the family wordmark ("rem" accent + "ote" muted).
 // Shows nav (Users link for admins), the current user, and — on the Devices
 // page — the live-connection dot.
 export default function TopBar({ me, connected }) {
   const path = usePath();
+  const apk = useLatestApk();
   async function signOut(e) {
     e.preventDefault();
     try { await api.logout(); } catch {}
@@ -25,7 +26,7 @@ export default function TopBar({ me, connected }) {
           <a href="/users" className={path === '/users' ? 'active' : ''} onClick={go('/users')}>Users</a>
         )}
         <a href="/connect" title="Stream this device's camera to the dashboard">{isNative() ? 'Share this phone' : 'Share this device'}</a>
-        {!isNative() && <a href={APK_URL} download title="Android app: dashboard + always-on camera sharing">Get the app</a>}
+        {!isNative() && <a href={apk.url} download title={`Android app${apk.version ? ` ${apk.version}` : ''}: dashboard + always-on camera sharing`}>Get the app</a>}
         {connected !== undefined && (
           <span className="conn" title={connected ? 'Connected' : 'Reconnecting…'}>
             <span className={`live-dot ${connected ? '' : 'off'}`} />{connected ? 'live' : 'offline'}

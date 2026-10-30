@@ -291,6 +291,10 @@ https://claude.ai/artifact/JXwsnCcobFmRzHGix8mra2
 
 ## 10. Change log
 
+- **2026-10-30** — IP cameras (M7-ish): the Python agent (laptop/PC/Pi, repo remote_agent) can relay local
+  RTSP cameras to the dashboard. Each camera = its own provisioned device (id+token), shown as a normal
+  camera tile; the agent pulls RTSP via aiortc (PyAV/ffmpeg) and relays over the existing WebRTC signaling
+  (aiortc embeds ICE in the offer, so no server/browser changes). `--scan` finds cameras on the LAN.
 - **2026-10-30** — M6 polish: app 1.7.0 updates itself (banner + checked download + Android installer) and
   resumes sharing after a phone restart / app update (automatic on Android ≤10; "tap to resume" on 11+, the app
   resumes when opened). Server: device online/offline email alerts (Account page, admin; wait time, per-device,

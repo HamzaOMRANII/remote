@@ -1,0 +1,112 @@
+REMOTE — CLAUDE COWORK / SESSION NOTES
+======================================
+
+Project: remote  (remote.omranisystems.com)  — self-hosted remote access to your
+own devices: live camera + act (GPIO light/servo, allow-listed scripts, shell).
+User: homrani555@gmail.com
+
+HOW TO RESUME THIS SESSION
+--------------------------
+Session ID: feb1d7d9-ce8b-4d53-85d3-ce32a34b6586
+From a terminal on this machine:
+  cd / && claude --resume feb1d7d9-ce8b-4d53-85d3-ce32a34b6586    # full history
+  claude --continue                                               # most recent session here
+Or inside Claude Code: /resume  then pick this session.
+If prompts come up, re-read this file + /claude_cowork_gloabal.txt + ARCHITECTURE.md.
+Transcript: /root/.claude/projects/-/feb1d7d9-ce8b-4d53-85d3-ce32a34b6586.jsonl
+
+LIVE / ACCESS
+-------------
+- Dashboard: https://remote.omranisystems.com   login user: admin
+  (admin password is in /projects/remote/config.json and in the global cowork notes)
+- Device agent page (phones/laptops): https://remote.omranisystems.com/connect
+- Deployed: pm2 app "remote" (/projects/remote, 127.0.0.1:16010), nginx
+  /etc/nginx/conf.d/remote.conf (443, wildcard cert), Cloudflare-proxied.
+- TURN: reused existing coturn (turn.omranisystems.com -> 37.60.240.195);
+  /api/ice issues time-limited creds from config.server.turn.secret.
+- All secrets live in /projects/remote/config.json (gitignored): admin password,
+  sessionSecret, turn.secret. Device access tokens in data/devices.json
+  (gitignored, retrievable so "Reveal config" works). Users in data/users.json
+  (scrypt-hashed).
+
+REPOS (both PRIVATE, SSH remotes, branch main)
+----------------------------------------------
+- remote        -> git@github.com:HamzaOMRANII/remote.git        (server + viewer)
+- remote_agent  -> git@github.com:HamzaOMRANII/remote_agent.git  (device agent)
+
+ARCHITECTURE (short)
+--------------------
+Three parts: AGENTS -> BACKEND -> VIEWER. Capability model; two channels
+(control WebSocket + WebRTC media). Design INHERITED from server_monitoring /
+it.omranisystems.com (navy + petrol, Sora/Inter/JetBrains Mono, glass cards).
+Full detail: /projects/remote/ARCHITECTURE.md.
+Agents:
+  - Browser agent = /connect page (no install): camera, source picker
+    (built-in/USB/USB-C/Bluetooth cams, mic + audio toggle, IP-cam MJPEG best-effort).
+    Works on iPhone in-browser (foreground only).
+  - Python agent (remote_agent, ZERO-DEP stdlib WS client) = Pi/laptop: GPIO,
+    scripts, shell. gpiozero optional (Pi). pty shell is POSIX only.
+
+MILESTONES  (updated 2026-10-29 — latest session: remote_app_session, see remote_app_session.txt)
+----------
+M0 foundations ............ DONE
+M1 GPIO vertical slice .... DONE
+M2 camera (WebRTC + TURN) . DONE   browser agent /connect + dashboard viewer + coturn
+M3 scripts + shell ........ DONE   allow-listed scripts streamed; admin-only pty shell, password-gated
+M4 auth hardening ......... DONE + LIVE (2026-10-29, commit da67a95; agent efa62df)
+                                   2FA (TOTP + recovery codes) at /account, 2-step login, QR pairing
+                                   (Pair (QR) -> /connect#pair=CODE, agent --pair CODE), rate limits,
+                                   password-bound sessions, self-service password change.
+M5 Android app ............ DONE + LIVE — APK 1.7.0 at /download/remote-agent.apk (1.6.0 = recording)
+                                   App "Remote" (com.omranisystems.remoteagent) = dashboard + "Share
+                                   this phone". Native sharing (NativeAgent: OkHttp WS + Google WebRTC
+                                   + Camera2 in AgentService) keeps streaming in background / screen
+                                   off / app closed (user-tested OK on 1.3.0). "Check camera" preview
+                                   (1.4.0, user OK). 1.5.0 crash fixes. 1.6.0 RECORDING on the phone
+                                   (Recorder.java + Recordings.java: MP4 in Movies/Remote, 5-min parts,
+                                   Share to Drive + saved cloud link; never uploaded to our server — user's
+                                   choice). Family logo. iPhone = browser only.
+M6 polish ................. BUILT 2026-10-30 (owner chose 4 items), app 1.7.0:
+                                   1 backups: atomic data saves + data/history (14 days); server-wide
+                                     nightly backup covers data/ (cron line = owner, 03-backup-plan §3.6)
+                                   2 app self-update banner (UpdateBanner.jsx, AgentPlugin.installUpdate)
+                                   3 resume after reboot/update (BootReceiver, MainActivity.onResume)
+                                   4 online/offline email alerts (src/server/alerts.js, Account page)
+                                   DONE 2026-10-30: email set up, pm2 restarted, nightly backup cron installed. Owner approved (test email OK).
+                                   Later ideas: PWA, Pi agent autostart, media transfer.
+IP cameras ................ DONE (laptop) 2026-10-30, repo remote_agent commit d2bc9f4
+                                   agent/camera.py relays local RTSP cameras over WebRTC (aiortc/PyAV);
+                                   each camera = its own provisioned device -> normal camera tile, no
+                                   server/browser changes. agent/scan.py + --scan finds cameras on the LAN.
+                                   Core agent stays zero-dep; `pip install aiortc` only when cameras configured.
+                                   Config: "cameras":[{id,name,token,rtsp,audio?}]. NOT yet tested with a real
+                                   camera (none available); handshake verified with a synthetic track.
+                                   TODO next: same relay inside the Android app (user wants "all of them").
+
+STATE AT SAVE (2026-10-29)
+--------------------------
+- remote HEAD: bd66250 · remote_agent HEAD: efa62df · pm2 "remote" online (restarted by user 05:28).
+- Devices in the store are the user's — do not delete ("laptopincognito" etc.).
+- Blueprint artifact: https://claude.ai/artifact/JXwsnCcobFmRzHGix8mra2
+- Deploying: `npm run build` publishes the web client + APK (static, allowed for Claude);
+  `pm2 restart remote` (server code changes) is blocked for Claude by the auto-mode safety
+  gate -> the user runs it.
+- APK: bump mobile/package.json version, `cd mobile && npm run build:apk`, then `npm run build`.
+
+HOW TO TEST QUICKLY
+-------------------
+Dashboard -> Add device -> Pair (QR). Phone: install the APK, Share this phone -> Scan pairing
+QR -> Start sharing; or any browser: open /connect and type the code. On a Pi:
+`python3 agent/remote_agent.py --pair CODE --url https://remote.omranisystems.com`.
+
+HANDOFF FROM SESSION cff78de1 (2026-10-29 06:45) — OWN SIGNING KEY FOR REMOTE (owner's request)
+--------------------------------------------------------------------------------------------
+The owner wants every app signed with its own key. Remote's own key now exists, nothing else was changed:
+  /root/.remote-keystore/remote-release.jks + /root/.remote-keystore/keystore.properties (alias "remote", PKCS12,
+  RSA 4096); copy in Omrani Pass → "Apps builds keys" → "Remote — Android signing key"; included in omrani-backup.sh.
+DONE in 1.6.0 (2026-10-30): mobile/android/keystore.properties now points to /root/.remote-keystore;
+the download links tell users to uninstall ≤1.5 first. Original steps, for reference:
+  1. Point mobile/android/keystore.properties to /root/.remote-keystore (copy that keystore.properties over it).
+  2. Bump the version and npm run build:apk, then publish as usual.
+  3. IMPORTANT: Android refuses to update an app signed with another key — anyone who installed Remote (≤ 1.4.0,
+     signed with the H_CHAT key) must UNINSTALL it once and install the new APK. Say so on the download page/update card.

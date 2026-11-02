@@ -1,0 +1,127 @@
+REMOTE APP SESSION — "remote_app_session"
+=========================================
+Project: Remote (remote.omranisystems.com) + its Android app + remote_agent (laptop/Pi)
+User: homrani555@gmail.com
+Date: 2026-10-29 (last updated 2026-10-30)
+
+RESUME POINT (2026-10-30): M6 done (app 1.7.0) + IP cameras for laptop done (remote_agent d2bc9f4, pushed).
+  NEXT: build the same IP-camera relay INSIDE the Android app (spare phone as relay); then optional PC helper.
+  PENDING user tests: 1.7.0 on the phone; a real RTSP camera on the laptop (`pip install aiortc`, --scan, add
+  to config.json "cameras"). See the IP CAMERAS and M6 sections below.
+
+HOW TO RESUME THIS SESSION
+--------------------------
+Session ID: 83da2076-82a6-45e2-97e5-ef7e3e074fc0
+  cd /projects && claude --resume 83da2076-82a6-45e2-97e5-ef7e3e074fc0    # this exact discussion
+  or inside Claude Code: /resume  -> pick "remote_app_session"
+  (rename it in the picker with /rename remote_app_session if the name isn't shown)
+Transcript: /root/.claude/projects/-projects/83da2076-82a6-45e2-97e5-ef7e3e074fc0.jsonl
+If prompts come up, re-read: this file, /projects/remote/claude_cowork.txt (milestones),
+/projects/remote/ARCHITECTURE.md, /claude_cowork_gloabal.txt.
+
+WHAT THIS SESSION DID (in order)
+--------------------------------
+1. Read status: monitoring (M1-M2 done, M3 in progress then) and Remote (M0-M3 done).
+2. Remote M4 — auth hardening (commit da67a95, agent efa62df) — LIVE
+   - TOTP 2FA + 10 recovery codes (/account), 2-step login, shell unlock needs a code,
+     admin "Reset 2FA"; self-service password change.
+   - One-time QR pairing: device card -> Pair (QR); /connect#pair=CODE; agent --pair CODE.
+   - Rate limits on login / 2FA / pairing / agent hello; sessions bound to password hash.
+   - Tested on an isolated copy: 36/36 API checks + headless UI run.
+3. Remote M5 — Android app (mobile/, Capacitor 8.5.3) — LIVE, APK 1.4.0
+   1.0.0  app shell loading /connect + foreground service (commit 90cf65b)
+   1.1.0  download links on the site; app opens the dashboard + "Share this phone" (1e223a0)
+   1.2.0  family logo (ring + S, petrol S, deep-petrol camera badge) = launcher icon, splash,
+          site favicon; app renamed "Remote" (e734770)
+   1.3.0  NATIVE sharing: camera + WebRTC + WebSocket in the background service, survives the
+          app being closed/swiped; Stop in notification; camera only on while watched;
+          dashboard usable while sharing (92b557c) — USER TESTED: works
+   1.4.0  "Check camera": optional full-screen native preview of what the dashboard sees
+          (bd66250) — USER TESTED: works
+   1.5.0  crash fixes: app was stopping suddenly (esp. switching camera during Check camera).
+          Causes: late WebSocket/WebRTC callbacks hit the stopped agent thread (uncaught
+          RejectedExecution = app killed); preview drew with a released EGL context; old/new
+          agent fought over the camera. Fix: guarded post(), process-wide EGL + factory,
+          in-place camera switch (setCamera), restart waits for old agent, Switch camera
+          button in the preview. Awaiting user confirmation.
+   1.6.0  RECORDING (2026-10-30). User's idea: save the shared session as proof. User chose
+          "phone only" storage (no writes to our server) + share to Google Drive & keep the link.
+          - Record / Stop recording in the app, in Check camera (REC timer), Stop in the notification.
+          - Camera stays on while recording even with nobody watching; works with the app closed.
+          - MP4 (H.264 from the WebRTC track via EglRenderer -> MediaCodec surface; AAC 48 kHz mono).
+            Sound only when "Share audio" is on (toggle locked while recording). Mic: own AudioRecord,
+            but while a viewer listens WebRTC owns the mic and its samples are reused (no mic fight).
+          - 5-minute parts (split on keyframes), Gallery > Movies/Remote (Android 10+; app folder on 7-9).
+          - List: Play / Share (Android share sheet -> Drive...) / Add link (cloud link pasted back) /
+            Cloud copy / Delete. Stored in prefs "remote_recordings".
+          - NOT hidden: Android's notification says "recording" (no stealth features — by design;
+            legal caution about secret recording given to the user).
+          - Also switched to Remote's own signing key -> users must uninstall <=1.5 once.
+          USER TESTED 2026-10-30: all approved (recording, Drive link, 1.5.0 crash fixes).
+
+KEY FILES
+---------
+mobile/capacitor.config.json            app id com.omranisystems.remoteagent, loads https://remote.omranisystems.com/
+mobile/android/app/src/main/java/com/omranisystems/remoteagent/
+  NativeAgent.java      protocol hello/signal + WebRTC (io.getstream:stream-webrtc-android 1.3.9) + Camera2
+  AgentService.java     foreground service (camera|mic), locks, notification + Stop, prefs, sticky
+  AgentPlugin.java      JS bridge "RemoteAgent": share / stop / status / preview / batteryExemption
+  PreviewActivity.java  "Check camera" full-screen view (+ Record button)
+  Recorder.java         camera track + mic -> MP4 (MediaCodec/MediaMuxer), 5-min parts
+  Recordings.java       files in Movies/Remote + the recordings list (links, delete, share URIs)
+mobile/resources/logo-mark.svg + mobile/scripts/android-assets.sh   logo -> icons/splash
+mobile/scripts/build-apk.mjs            signed APK -> public/download/remote-agent.apk + latest.json
+mobile/android/keystore.properties      signing: Remote's own key /root/.remote-keystore (since 1.6.0) — gitignored
+src/client/components/NativeShare.jsx   app's sharing screen (remote control of the service)
+src/client/components/AppDownload.jsx   "Get the Android app" links (+ "uninstall <=1.5 first")
+src/client/components/RecordingList.jsx recordings list on the app's sharing screen
+src/server/{totp,ratelimit}.js, auth.js, users.js, devices.js, api.js, wss.js   M4
+
+RELEASE STEPS
+-------------
+APK:  bump "version" in mobile/package.json -> cd mobile && npm run build:apk
+Web:  cd /projects/remote && npm run build        (publishes client + APK; Claude may run this)
+Server code changes: pm2 restart remote            (USER runs it — blocked for Claude by the safety gate)
+Commit + push: remote repo (private), branch main.
+
+M6 (2026-10-30) — owner picked: app self-update, restart after reboot, online/offline alerts, backups.
+   1.7.0 app: update banner (checks /download/latest.json on start/resume; downloads, verifies sha256,
+          opens Android installer; first time asks "install unknown apps"); BootReceiver + MainActivity
+          resume sharing (Android 11+ needs the app opened -> "tap to resume" notification).
+   Server: alerts.js (email after graceMin offline, "back online" only after an offline email, 15-min
+          per-device cooldown, 20/h cap), /api/alerts (+ /test), AlertsPanel on Account (admin);
+          jsonfile.js atomic writes + data/history daily copies. nodemailer added.
+   Copying the Gmail app password from monitoring was blocked for Claude -> owner runs
+          node /projects/remote/scripts/use-monitoring-email.js  then  pm2 restart remote.
+   Tested on an isolated copy: alert flow (short drop silent, offline after wait, back online, cooldown).
+   NOTE: port 2525 on the box = another session's smtp-sink (job b0169ec0) — not a real mail server.
+
+IP CAMERAS (2026-10-30) — laptop/PC/Pi first (user approved; "access any camera in my local network").
+   repo remote_agent (commit d2bc9f4, pushed): agent/camera.py (CameraManager/CameraDevice, aiortc RTSP->WebRTC,
+   ICE from /api/ice, friendly auth/timeout errors, camera opened only while watched), agent/scan.py + --scan
+   (find RTSP port 554 on the LAN). Each camera is its own provisioned device (Devices -> Add device) listed in
+   config.json "cameras":[{id,name,token,rtsp,audio?}]; appears as a normal camera tile, zero server/browser
+   changes (aiortc embeds ICE in the offer). Core agent still zero-dep; `pip install aiortc` only if cameras set.
+   Tested here: config validation, LAN scan, and the FULL signaling handshake with a synthetic video track
+   (hello camera cap -> offer w/ video -> viewer got the track). NOT tested with a real RTSP camera (none here).
+   NEXT the user also wants the SAME camera relay inside the Android app (a spare phone as relay) and later PC/Pi.
+
+MILESTONE PROGRESS
+------------------
+M0 M1 M2 M3 M4 M5 ...... DONE (M4 + M5 live)
+M6 polish .............. BUILT (see M6 above); was: — pick from: auto-start sharing after phone reboot, PWA install,
+                         Pi agent autostart (systemd), backups of data/, online/offline
+                         notifications, media transfer, in-app update check (latest.json exists)
+Extra .................. RTSP -> WebRTC gateway for real IP cameras
+
+OPEN ITEMS / TO CHECK
+---------------------
+- User to test 1.6.0: uninstall old app, install, re-pair, record (with/without viewers, app closed, audio).
+- Limits today: Android "Force stop" or a reboot ends sharing (reboot autostart = M6 candidate);
+  if Android kills the app it shows "Sharing paused — tap to resume".
+- Python agent (Pi) still not run on real hardware.
+- Optional: pm2 restart remote to serve .apk with the Android MIME type (works without).
+
+FIX 2026-10-30: login page looked outdated (user saw "1.5", downloaded 1.4). Causes: fixed APK URL served
+from Cloudflare/browser cache (CF caches .apk, 4 h); the "Have Remote 1.5 or older" note read like a version.
+Now links read /download/latest.json and use remote-agent.apk?v=<version>; the page shows "Get the Android app 1.6.0".

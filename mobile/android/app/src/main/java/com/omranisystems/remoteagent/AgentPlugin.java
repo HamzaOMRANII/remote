@@ -52,6 +52,7 @@ import java.util.List;
  *   cameras()                                        { cameras:[…] } (never the passwords)
  *   watchCamera({id, low})                           full-screen live view on the home network
  *   removeCamera({id})                               forgets it
+ *   recordCamera({id, on})                           record a relayed camera on this phone (while sharing; M8b)
  *   setCameraRelay({id, on})                         show it on the dashboard (relayed by this phone while sharing)
  *   openWebPage({ip, port})                          the camera's own web page in the browser
  */
@@ -143,6 +144,7 @@ public class AgentPlugin extends Plugin {
         r.put("recording", rec != null);
         r.put("recordingSince", rec != null ? rec.since : 0);
         r.put("recordingAudio", rec != null && rec.audio);
+        r.put("cameraRecordings", new org.json.JSONArray(NativeAgent.CAMERA_RECORDERS.keySet()));
         call.resolve(r);
     }
 
@@ -442,6 +444,15 @@ public class AgentPlugin extends Plugin {
             .putExtra(CameraPlayerActivity.EXTRA_LOW, call.getBoolean("low", false));
         getActivity().startActivity(i);
         call.resolve();
+    }
+
+    @PluginMethod
+    public void recordCamera(PluginCall call) {
+        NativeAgent a = NativeAgent.current;
+        if (a == null) { call.reject("Start sharing first: the phone records a camera while it relays it."); return; }
+        a.recordCamera(call.getString("id", ""), call.getBoolean("on", false), err -> {
+            if (err == null) call.resolve(); else call.reject(err);
+        });
     }
 
     @PluginMethod

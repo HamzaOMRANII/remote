@@ -42,7 +42,7 @@ export function AddCameraForm({ ra, host, onAdded, onCancel }) {
 }
 
 // The cameras saved on this phone: watch (home network), light stream, web page, remove.
-export function CameraList({ ra, cameras, onChanged, onError }) {
+export function CameraList({ ra, cameras, share = { sharing: false, cameraRecordings: [] }, onChanged, onError }) {
   if (!cameras.length) return null;
   async function remove(c) {
     if (!window.confirm(`Remove ${c.name} from this phone?`)) return;
@@ -70,6 +70,21 @@ export function CameraList({ ra, cameras, onChanged, onError }) {
             {c.webPort ? <button className="secondary" onClick={() => ra.openWebPage({ ip: c.ip, port: c.webPort })}>Web page</button> : null}
             <button className="secondary" onClick={() => remove(c)}>Remove</button>
           </div>
+          {c.relay && (() => {
+            const rec = share.cameraRecordings.includes(c.id);
+            return (
+              <div style={{ marginTop: 8 }}>
+                <button className={`rec-btn ${rec ? 'on' : ''}`} disabled={!share.sharing}
+                  onClick={() => ra.recordCamera({ id: c.id, on: !rec }).then(onChanged).catch((e) => onError(e.message))}>
+                  <span className="rec-dot" />{rec ? 'Stop recording' : 'Record on this phone'}</button>
+                <p className="muted rem-sub" style={{ margin: '6px 0 0' }}>
+                  {share.sharing
+                    ? 'Saved on this phone in Gallery › Movies › Remote, 5-minute parts, no sound. Nothing goes to the server.'
+                    : 'Start sharing above to record this camera (the phone records while it relays it).'}
+                </p>
+              </div>
+            );
+          })()}
         </li>
       ))}
     </ul>

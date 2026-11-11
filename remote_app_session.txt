@@ -163,3 +163,7 @@ M7 DONE 2026-11-11 (session 2efdda84-…, owner said "start all the milestones i
   CameraAccessCheck (JVM), remote_agent/tests/check_scan.py + check_attached.py, Playwright e2e for every step.
   NOT tested: real video (no camera / no aiortc here) -> owner tests at home with real cameras.
   D2 default applied: camera passwords only on the relay device (encrypted).
+
+M8 PLAN (2026-11-11, owner chose all, built from session 2efdda84): M8a laptop/Pi agent starts by itself (systemd /
+  Windows task) -> M8b record relayed IP cameras on the home phone -> M8c motion alerts (opt-in per camera).
+  In parallel: TEST ROUND — owner tests 1.10.0 at home with real cameras; fix what fails between steps.

@@ -48,6 +48,7 @@ public class AgentService extends Service {
 
         if (ACTION_STOP_RECORDING.equals(action)) {
             NativeAgent.stopRecording(null);
+            NativeAgent.stopCameraRecordings();
             return START_STICKY;
         }
         if (ACTION_STOP.equals(action)) {
@@ -148,19 +149,29 @@ public class AgentService extends Service {
         Intent stop = new Intent(this, AgentService.class).setAction(ACTION_STOP);
         PendingIntent stopPi = PendingIntent.getService(this, 1, stop, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         Recorder rec = NativeAgent.RECORDER;
+        // relayed cameras being recorded (M8b) are named in the notification: nothing is recorded out of sight
+        StringBuilder cams = new StringBuilder();
+        long camSince = 0;
+        for (Recorder r : NativeAgent.CAMERA_RECORDERS.values()) {
+            cams.append(cams.length() == 0 ? "" : ", ").append(r.label.replace('-', ' '));
+            if (camSince == 0 || r.since < camSince) camSince = r.since;
+        }
+        boolean recording = rec != null || cams.length() > 0;
+        String title = rec != null ? "Remote · recording " + who.toLowerCase() + (cams.length() > 0 ? " + " + cams : "")
+            : cams.length() > 0 ? "Remote · recording " + cams : "Remote · " + who + " shared";
         NotificationCompat.Builder b = new NotificationCompat.Builder(this, CHANNEL)
-            .setSmallIcon(rec != null ? android.R.drawable.presence_video_busy : android.R.drawable.presence_video_online)
-            .setColor(rec != null ? 0xFFE5484D : 0xFF2FD1D9)
-            .setContentTitle(rec != null ? "Remote · recording " + who.toLowerCase() : "Remote · " + who + " shared")
-            .setContentText(rec != null ? "Saving to this phone · " + text : text)
+            .setSmallIcon(recording ? android.R.drawable.presence_video_busy : android.R.drawable.presence_video_online)
+            .setColor(recording ? 0xFFE5484D : 0xFF2FD1D9)
+            .setContentTitle(title)
+            .setContentText(recording ? "Saving to this phone · " + text : text)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setContentIntent(openApp());
-        if (rec != null) {
+        if (recording) {
             // the notification shows the running time of the recording
             Intent stopRec = new Intent(this, AgentService.class).setAction(ACTION_STOP_RECORDING);
-            b.setWhen(rec.since).setShowWhen(true).setUsesChronometer(true)
+            b.setWhen(rec != null ? rec.since : camSince).setShowWhen(true).setUsesChronometer(true)
              .addAction(0, "Stop recording", PendingIntent.getService(this, 2, stopRec, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT));
         }
         return b.addAction(0, "Stop sharing", stopPi).build();

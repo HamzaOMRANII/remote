@@ -13,6 +13,7 @@
 const HELLO = 'hello';        // { type, token, device:{id,name,platform}, capabilities:[...] }
 const RESULT = 'result';      // { type, reqId, ok, data?, error? }
 const STREAM = 'stream';      // { type, reqId, chunk }   (terminal/script output, discovery results)
+const EVENT = 'event';        // { type, kind:'motion', camera, name, at, snapshot? (base64 JPEG) }  (M8c)
 const CAPS = 'caps';          // { type, capabilities:[...] }  capabilities changed (e.g. joined the owner's Wi-Fi)
 
 // Server -> agent
@@ -54,5 +55,5 @@ function safeParse(raw) {
 }
 
 module.exports = {
-  HELLO, RESULT, STREAM, CAPS, HELLO_OK, ACTION, DEVICES, ERROR, SIGNAL, CAP, safeParse,
+  HELLO, RESULT, STREAM, CAPS, EVENT, HELLO_OK, ACTION, DEVICES, ERROR, SIGNAL, CAP, safeParse,
 };

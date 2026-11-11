@@ -42,7 +42,7 @@ export function AddCameraForm({ ra, host, onAdded, onCancel }) {
 }
 
 // The cameras saved on this phone: watch (home network), light stream, web page, remove.
-export function CameraList({ ra, cameras, onChanged, onError }) {
+export function CameraList({ ra, cameras, share = { sharing: false, cameraRecordings: [] }, onChanged, onError }) {
   if (!cameras.length) return null;
   async function remove(c) {
     if (!window.confirm(`Remove ${c.name} from this phone?`)) return;
@@ -70,8 +70,64 @@ export function CameraList({ ra, cameras, onChanged, onError }) {
             {c.webPort ? <button className="secondary" onClick={() => ra.openWebPage({ ip: c.ip, port: c.webPort })}>Web page</button> : null}
             <button className="secondary" onClick={() => remove(c)}>Remove</button>
           </div>
+          {c.relay && <MotionSettings ra={ra} cam={c} onChanged={onChanged} onError={onError} />}
+          {c.relay && (() => {
+            const rec = share.cameraRecordings.includes(c.id);
+            return (
+              <div style={{ marginTop: 8 }}>
+                <button className={`rec-btn ${rec ? 'on' : ''}`} disabled={!share.sharing}
+                  onClick={() => ra.recordCamera({ id: c.id, on: !rec }).then(onChanged).catch((e) => onError(e.message))}>
+                  <span className="rec-dot" />{rec ? 'Stop recording' : 'Record on this phone'}</button>
+                <p className="muted rem-sub" style={{ margin: '6px 0 0' }}>
+                  {share.sharing
+                    ? 'Saved on this phone in Gallery › Movies › Remote, 5-minute parts, no sound. Nothing goes to the server.'
+                    : 'Start sharing above to record this camera (the phone records while it relays it).'}
+                </p>
+              </div>
+            );
+          })()}
         </li>
       ))}
     </ul>
+  );
+}
+
+// Motion alerts for one shown camera (M8c): detected on this phone while it shares on the home network; the
+// server emails the owner (Account › Alerts on the dashboard must be on). Snapshots only if allowed here.
+function MotionSettings({ ra, cam, onChanged, onError }) {
+  const set = (patch) => ra.setCameraMotion({ id: cam.id, ...patch }).then(onChanged).catch((e) => onError(e.message));
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div className="ctl-row">
+        <span className="ctl-label">Motion alerts<span className="ctl-pin">email when this camera sees movement</span></span>
+        <label className="switch">
+          <input type="checkbox" checked={!!cam.motion} aria-label={`Motion alerts for ${cam.name}`} onChange={(e) => set({ on: e.target.checked })} />
+          <span className="track" /><span className="knob" />
+        </label>
+      </div>
+      {cam.motion && (
+        <>
+          <div className="seg" role="group" aria-label="Sensitivity" style={{ marginTop: 8 }}>
+            {[['low', 'Low'], ['medium', 'Medium'], ['high', 'High']].map(([v, l]) => (
+              <button key={v} type="button" className={(cam.motionLevel || 'medium') === v ? 'on' : ''} onClick={() => set({ level: v })}>{l}</button>
+            ))}
+          </div>
+          <div className="ctl-row" style={{ marginTop: 8 }}>
+            <span className="ctl-label">Snapshot in the email</span>
+            <label className="switch">
+              <input type="checkbox" checked={!!cam.motionSnapshot} aria-label={`Snapshot in the email for ${cam.name}`} onChange={(e) => set({ snapshot: e.target.checked })} />
+              <span className="track" /><span className="knob" />
+            </label>
+          </div>
+          <p className="muted rem-sub" style={{ margin: '6px 0 0' }}>
+            Low: a person close by · High: small movements. Watched on this phone while it shares on your network
+            (the camera stream then runs all the time on your Wi-Fi). At most one email every 10 minutes per camera.
+            {cam.motionSnapshot
+              ? ' The picture goes through the Remote server into your email; the server doesn\'t keep it.'
+              : ' No picture leaves the phone.'}
+          </p>
+        </>
+      )}
+    </div>
   );
 }

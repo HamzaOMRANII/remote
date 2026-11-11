@@ -15,6 +15,7 @@ const { writeJson } = require('./jsonfile');
 
 const MIN = 60 * 1000;
 const DEVICE_COOLDOWN = 15 * MIN;
+const MOTION_COOLDOWN = 10 * MIN;
 const MAX_PER_HOUR = 20;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -35,7 +36,7 @@ function create(cfg, root, devices) {
   const active = () => !!(smtp && settings.enabled && settings.to.length);
   const watched = (id) => !settings.muted.includes(id);
 
-  async function send(subject, text, { force = false } = {}) {
+  async function send(subject, text, { force = false, attachments } = {}) {
     if (!smtp) return { ok: false, error: 'Email is not set up on the server (config.json → smtp).' };
     const now = Date.now();
     sent = sent.filter((t) => now - t < 60 * MIN);
@@ -45,7 +46,7 @@ function create(cfg, root, devices) {
       await nodemailer.createTransport({
         host: smtp.host, port: smtp.port || 465, secure: smtp.secure !== false,
         auth: smtp.user ? { user: smtp.user, pass: smtp.pass } : undefined,
-      }).sendMail({ from: smtp.from || smtp.user, to: settings.to.join(', '), subject, text });
+      }).sendMail({ from: smtp.from || smtp.user, to: settings.to.join(', '), subject, text, attachments });
       console.log('[alerts] sent:', subject);
       return { ok: true };
     } catch (e) {
@@ -85,6 +86,22 @@ function create(cfg, root, devices) {
     }, settings.graceMin * MIN));
   }
 
+  // Motion seen by a phone on one of its relayed cameras (M8c). The snapshot, when the owner allowed it on the
+  // phone, is attached to the email and never stored here. One email per camera per 10 minutes.
+  const lastMotion = new Map(); // "deviceId/cameraId" -> last motion email time
+  function motion(device, camera, name, at, jpeg) {
+    if (!active() || !watched(device.id)) return;
+    const key = `${device.id}/${camera}`;
+    if (Date.now() - (lastMotion.get(key) || 0) < MOTION_COOLDOWN) return;
+    lastMotion.set(key, Date.now());
+    const where = nameOf(device.id, device.name);
+    send(`🚶 Remote: motion on ${name}`,
+      `${name} (relayed by ${where}) saw movement at ${when(at || Date.now())}.\n` +
+      (jpeg ? 'The snapshot is attached.\n' : 'No snapshot: they are off for this camera (Remote app › My cameras).\n') +
+      `\nWatch it live: https://remote.omranisystems.com/\nNext alert for this camera in 10 minutes at the earliest.`,
+      { attachments: jpeg ? [{ filename: `${name.replace(/[^A-Za-z0-9-]+/g, '-')}-motion.jpg`, content: jpeg, contentType: 'image/jpeg' }] : undefined });
+  }
+
   function publicSettings() {
     return { ...settings, smtpReady: !!smtp, from: smtp ? (smtp.from || smtp.user) : '' };
   }
@@ -118,7 +135,7 @@ function create(cfg, root, devices) {
     return send('✅ Remote: test alert', `This is a test from Remote (remote.omranisystems.com).\nDevice alerts will arrive like this.\n${when(Date.now())}`, { force: true });
   }
 
-  return { online, offline, settings: publicSettings, update, test };
+  return { online, offline, motion, settings: publicSettings, update, test };
 }
 
 module.exports = { create };

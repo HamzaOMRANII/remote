@@ -5,13 +5,20 @@ import { useEffect, useRef, useState } from 'react';
 // stream. The device agent is the browser page at /connect on that device.
 // A device can offer several cameras (cap.cameras, M7c: a phone relaying the owner's IP cameras): the viewer
 // picks one, and every signal names it so the device can run one connection per camera.
-export default function CameraView({ device, cap = {}, sendSignal, onSignal }) {
+export default function CameraView({ device, cap = {}, action, sendSignal, onSignal }) {
   const cameras = Array.isArray(cap.cameras) ? cap.cameras : [];
   const [camera, setCamera] = useState(cameras[0]?.id || '');
   const camRef = useRef(camera);
   camRef.current = camera;
   const videoRef = useRef(null);
   const pcRef = useRef(null);
+  const current = cameras.find((c) => c.id === camera);
+  const [recBusy, setRecBusy] = useState(false);
+  async function toggleRecord() {
+    setRecBusy(true); setErr('');
+    try { await action(device, 'camera', 'record', { camera, on: !current.recording }); }
+    catch (e) { setErr(e.message); } finally { setRecBusy(false); }
+  }
   const send = (data) => sendSignal(device, camRef.current ? { ...data, camera: camRef.current } : data);
   const [status, setStatus] = useState('idle'); // idle | connecting | live | error
   const [err, setErr] = useState('');
@@ -91,6 +98,12 @@ export default function CameraView({ device, cap = {}, sendSignal, onSignal }) {
         {status === 'idle' || status === 'error'
           ? <button onClick={start}>Start camera</button>
           : <button className="secondary" onClick={stop}>Stop</button>}
+        {current && current.motion && <span className="mono rem-sub" title="Set in the Remote app on that phone">motion alerts on</span>}
+        {current && current.record && action && (
+          <button className={`rec-btn ${current.recording ? 'on' : ''}`} disabled={recBusy} onClick={toggleRecord}
+            title="Recorded on the phone at home (Gallery › Movies › Remote), never on the server">
+            <span className="rec-dot" />{current.recording ? 'Stop recording' : 'Record'}</button>
+        )}
       </div>
       {err && <div className="ctl-note err">{err}</div>}
     </div>

@@ -89,6 +89,23 @@ function createRegistry(events = {}) {
     broadcastDevices();
   }
 
+  // An event from an agent (M8c: motion on a relayed camera). Checked here; the alert module emails it.
+  function agentEvent(ws, msg) {
+    const entry = agents.get(ws._deviceId);
+    if (!entry || entry.ws !== ws || msg.kind !== 'motion') return;
+    const camera = String(msg.camera || '').slice(0, 60);
+    const cam = entry.capabilities.find((c) => c.cap === 'camera')?.cameras?.find((c) => c.id === camera);
+    if (!cam) return; // only cameras this device relays
+    let jpeg = null;
+    if (typeof msg.snapshot === 'string' && msg.snapshot.length < 400_000) {
+      const buf = Buffer.from(msg.snapshot, 'base64');
+      if (buf[0] === 0xff && buf[1] === 0xd8) jpeg = buf; // a JPEG, nothing else
+    }
+    console.log(`[audit] device=${entry.device.id} event=motion camera=${camera} snapshot=${jpeg ? jpeg.length + 'B' : 'no'}`);
+    try { events.motion?.(entry.device, camera, String(cam.name || camera).slice(0, 60), Number(msg.at) || Date.now(), jpeg); }
+    catch (e) { console.error('[registry] motion hook', e); }
+  }
+
   function removeAgent(ws) {
     const id = ws._deviceId;
     if (id && agents.get(id)?.ws === ws) {
@@ -170,7 +187,7 @@ function createRegistry(events = {}) {
   return {
     agents, viewers,
     addViewer, removeViewer, addAgent, removeAgent,
-    routeAction, routeFromAgent, deviceList, updateCapabilities,
+    routeAction, routeFromAgent, deviceList, updateCapabilities, agentEvent,
     signalToAgent, signalToViewer,
   };
 }

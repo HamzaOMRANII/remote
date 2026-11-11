@@ -32,7 +32,7 @@ const users = usersFactory.create(cfg, ROOT);
 const devices = devicesFactory.create(cfg, ROOT);
 const auth = authFactory.create(cfg, users);
 const alerts = alertsFactory.create(cfg, ROOT, devices);
-const registry = createRegistry({ online: alerts.online, offline: alerts.offline });
+const registry = createRegistry({ online: alerts.online, offline: alerts.offline, motion: alerts.motion });
 
 const PORT = cfg.server.port || 16010;
 const HOST = cfg.server.host || '127.0.0.1';

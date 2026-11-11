@@ -72,7 +72,15 @@ class Recorder implements VideoSink {
     /** true while WebRTC records the microphone (a viewer listens): take its samples instead of our own recorder */
     static volatile boolean webrtcMic;
 
+    /** What is recorded, in the file name ("" = this phone's camera; a camera's name for a relayed camera, M8b). */
+    final String label;
+
     Recorder(Context ctx, EglBase.Context egl, boolean wantAudio, OnFail onFail) {
+        this(ctx, egl, wantAudio, "", onFail);
+    }
+
+    Recorder(Context ctx, EglBase.Context egl, boolean wantAudio, String label, OnFail onFail) {
+        this.label = label == null ? "" : label.replaceAll("[^A-Za-z0-9-]+", "-").replaceAll("^-+|-+$", "");
         this.ctx = ctx.getApplicationContext();
         this.egl = egl;
         this.onFail = onFail;
@@ -264,7 +272,7 @@ class Recorder implements VideoSink {
 
     private void openPart() throws Exception {
         part++;
-        String name = "Remote_" + session + (part > 1 ? "_part" + part : "") + ".mp4";
+        String name = "Remote_" + (label.isEmpty() ? "" : label + "_") + session + (part > 1 ? "_part" + part : "") + ".mp4";
         out = Recordings.create(ctx, name, session, part);
         started = false; wrote = false; vTrack = -1; aTrack = -1;
         partFirstUs = -1; partLastUs = 0;

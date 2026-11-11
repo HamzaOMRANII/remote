@@ -12,8 +12,12 @@ export default function MyNetwork({ ra }) {
   const [err, setErr] = useState('');
   const [cameras, setCameras] = useState([]);
   const [adding, setAdding] = useState('');
+  const [share, setShare] = useState({ sharing: false, cameraRecordings: [] });
 
-  const refresh = () => ra.networkStatus().then(setNet).catch(() => {});
+  const refresh = () => {
+    ra.networkStatus().then(setNet).catch(() => {});
+    ra.status().then((st) => setShare({ sharing: !!st.sharing, cameraRecordings: st.cameraRecordings || [] })).catch(() => {});
+  };
   const loadCameras = () => ra.cameras().then((r) => setCameras(r.cameras || [])).catch(() => {});
   useEffect(() => {
     refresh();
@@ -53,7 +57,7 @@ export default function MyNetwork({ ra }) {
             <button disabled={scanning} onClick={scan}>{scanning ? 'Scanning…' : 'Find my cameras'}</button>
             <button className="secondary" disabled={busy || scanning} onClick={forget}>Not my network</button>
           </div>
-          <CameraList ra={ra} cameras={cameras} onChanged={loadCameras} onError={setErr} />
+          <CameraList ra={ra} cameras={cameras} share={share} onChanged={() => { loadCameras(); refresh(); }} onError={setErr} />
           {(scanning || hosts.length > 0) && (
             <div style={{ marginTop: 12 }}>
               <NetworkHosts hosts={hosts} scanning={scanning} actions={(h) => {

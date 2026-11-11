@@ -101,7 +101,12 @@ class NativeAgent {
     // One connection per viewer AND camera: key = viewerId + "|" + cameraId ("" = this phone's own camera).
     // The dashboard can watch the phone and the cameras it relays (M7c) at the same time.
     private final Map<String, PeerConnection> peers = new HashMap<>();
-    private final Map<String, RtspRelay> relays = new HashMap<>(); // cameraId -> relay, while someone watches it
+    private final Map<String, RtspRelay> relays = new HashMap<>(); // cameraId -> relay, while watched or recorded
+    // Relayed cameras being recorded on this phone (M8b): cameraId -> recorder. Static for the notification / status.
+    static final Map<String, Recorder> CAMERA_RECORDERS = new java.util.concurrent.ConcurrentHashMap<>();
+    // Relayed cameras watched for motion (M8c): cameraId -> detector. Their relay runs while sharing on the home network.
+    private final Map<String, MotionDetector> motion = new HashMap<>();
+    private static final long MOTION_COOLDOWN_MS = 2 * 60_000;
 
     private static String key(String viewer, String camera) { return viewer + "|" + camera; }
     private static String viewerOf(String key) { return key.substring(0, key.lastIndexOf('|')); }
@@ -178,7 +183,7 @@ class NativeAgent {
             if (ws != null) ws.close(1000, "stopped");
             for (PeerConnection pc : peers.values()) pc.dispose();
             peers.clear();
-            stopRelays();
+            stopAllRelays();
             stopCamera();
             state = "stopped"; watchers = 0; lastError = "";
             running = false; // from here on, late callbacks are dropped by post()
@@ -335,7 +340,8 @@ class NativeAgent {
         if (HomeNetwork.current(ctx).trusted) {
             JSONArray list = new JSONArray();
             for (CameraStore.Cam c : CameraStore.list(ctx)) {
-                if (c.relay) list.put(new JSONObject().put("id", c.id).put("name", c.name).put("source", "rtsp"));
+                if (c.relay) list.put(new JSONObject().put("id", c.id).put("name", c.name).put("source", "rtsp")
+                    .put("record", true).put("recording", CAMERA_RECORDERS.containsKey(c.id)).put("motion", c.motion));
             }
             if (list.length() > 0) {
                 JSONArray cams = new JSONArray().put(new JSONObject().put("id", "phone").put("name", "This phone"));
@@ -354,6 +360,7 @@ class NativeAgent {
     /** Tells the server when the capabilities change (e.g. the phone joined or left the owner's Wi-Fi). */
     private void refreshCapabilities() {
         if (ws == null || !"online".equals(state)) return;
+        syncMotion();
         try {
             JSONArray caps = capabilities();
             if (caps.toString().equals(lastCaps)) return;
@@ -368,6 +375,23 @@ class NativeAgent {
     /** A dashboard action. Only "discovery / scan" exists on the phone: results stream back, then the full list. */
     private void onAction(JSONObject msg) throws Exception {
         String reqId = msg.optString("reqId");
+        if ("camera".equals(msg.optString("cap")) && "record".equals(msg.optString("do"))) {
+            JSONObject args = msg.optJSONObject("args");
+            String camera = args == null ? "" : args.optString("camera");
+            boolean on = args != null && args.optBoolean("on");
+            if (camera.isEmpty() || "phone".equals(camera)) {
+                send(new JSONObject().put("type", "result").put("reqId", reqId).put("ok", false).put("error", "Choose a relayed camera."));
+                return;
+            }
+            recordCamera(camera, on, error -> post(() -> {
+                try {
+                    JSONObject res = new JSONObject().put("type", "result").put("reqId", reqId).put("ok", error == null);
+                    if (error != null) res.put("error", error); else res.put("data", new JSONObject().put("recording", on));
+                    send(res);
+                } catch (Exception e) { Log.w(TAG, "record result", e); }
+            }));
+            return;
+        }
         if (!"discovery".equals(msg.optString("cap")) || !"scan".equals(msg.optString("do"))) {
             send(new JSONObject().put("type", "result").put("reqId", reqId).put("ok", false).put("error", "not supported on this phone"));
             return;
@@ -399,6 +423,7 @@ class NativeAgent {
                 retryMs = 1000;
                 setState("online", peers.size(), "");
                 lastCaps = capabilities().toString();
+                syncMotion();
             } else if ("signal".equals(type)) {
                 onSignal(msg.optString("from"), msg.optJSONObject("data"));
             } else if ("action".equals(type)) {
@@ -451,14 +476,9 @@ class NativeAgent {
                 if (!startCamera()) { replyError(viewer, lastError); return; }
                 video = videoTrack;
             } else {
-                RtspRelay relay = relays.get(camera);
-                if (relay == null) {
-                    CameraStore.Cam cam = CameraStore.get(ctx, camera);
-                    if (cam == null || !cam.relay) { replyError(viewer, "This camera isn't shared from the phone any more."); return; }
-                    if (!HomeNetwork.current(ctx).trusted) { replyError(viewer, "The phone isn't on the camera's network right now."); return; }
-                    relay = new RtspRelay(ctx, EGL.getEglBaseContext(), FACTORY, cam, msg -> post(() -> relayFailed(camera, msg)));
-                    relays.put(camera, relay);
-                }
+                String[] err = new String[1];
+                RtspRelay relay = ensureRelay(camera, err);
+                if (relay == null) { replyError(viewer, err[0]); return; }
                 video = relay.track();
             }
             PeerConnection.RTCConfiguration cfg = new PeerConnection.RTCConfiguration(fetchIceServers());
@@ -487,16 +507,149 @@ class NativeAgent {
         }
     }
 
+    /** The camera's relay, started if needed. Null (with the reason in err[0]) when it can't be relayed now. */
+    private RtspRelay ensureRelay(String camera, String[] err) {
+        RtspRelay relay = relays.get(camera);
+        if (relay != null) return relay;
+        CameraStore.Cam cam = CameraStore.get(ctx, camera);
+        if (cam == null || !cam.relay) { err[0] = "This camera isn't shared from the phone any more."; return null; }
+        if (!HomeNetwork.current(ctx).trusted) { err[0] = "The phone isn't on the camera's network right now."; return null; }
+        ensureFactory();
+        relay = new RtspRelay(ctx, EGL.getEglBaseContext(), FACTORY, cam, msg -> post(() -> relayFailed(camera, msg)));
+        relays.put(camera, relay);
+        return relay;
+    }
+
+    /** Stops a camera's relay once nobody watches it and it isn't being recorded. */
+    private void releaseRelayIfUnused(String camera) {
+        for (String k : peers.keySet()) if (cameraOf(k).equals(camera)) return;
+        if (CAMERA_RECORDERS.containsKey(camera) || motion.containsKey(camera)) return;
+        RtspRelay r = relays.remove(camera);
+        if (r != null) r.stop();
+    }
+
+    // ---- recording relayed cameras on this phone (M8b) -------------------------------------------------------
+
+    /** Starts / stops recording a relayed camera (from the app or the dashboard). Files stay on this phone. */
+    void recordCamera(String camera, boolean on, Result result) {
+        boolean queued = post(() -> {
+            if (!on) { stopCameraRecording(camera); result.onResult(null); return; }
+            if (CAMERA_RECORDERS.containsKey(camera)) { result.onResult(null); return; }
+            String[] err = new String[1];
+            RtspRelay relay = ensureRelay(camera, err);
+            if (relay == null) { result.onResult(err[0]); return; }
+            CameraStore.Cam cam = CameraStore.get(ctx, camera);
+            Recorder r = new Recorder(ctx, EGL.getEglBaseContext(), false, cam == null ? camera : cam.name,
+                e -> post(() -> { lastError = e; stopCameraRecording(camera); }));
+            CAMERA_RECORDERS.put(camera, r);
+            relay.track().addSink(r);
+            changed();
+            refreshCapabilities();
+            result.onResult(null);
+        });
+        if (!queued) result.onResult("Start sharing first.");
+    }
+
+    private void stopCameraRecording(String camera) {
+        Recorder r = CAMERA_RECORDERS.remove(camera);
+        if (r == null) return;
+        RtspRelay relay = relays.get(camera);
+        if (relay != null) relay.track().removeSink(r);
+        r.finish(() -> { NativeAgent now = current; if (now != null) now.changed(); });
+        releaseRelayIfUnused(camera);
+        changed();
+        refreshCapabilities();
+    }
+
+    // ---- motion alerts on relayed cameras (M8c) ---------------------------------------------------------------
+
+    /** Starts / stops the motion detectors to match the cameras' settings (and the network). Agent thread. */
+    private void syncMotion() {
+        boolean home = HomeNetwork.current(ctx).trusted && "online".equals(state);
+        java.util.Set<String> wanted = new java.util.HashSet<>();
+        for (CameraStore.Cam c : CameraStore.list(ctx)) {
+            if (home && c.relay && c.motion) wanted.add(c.id);
+        }
+        for (String id : new ArrayList<>(motion.keySet())) {
+            MotionDetector d = motion.get(id);
+            CameraStore.Cam c = CameraStore.get(ctx, id);
+            boolean changed = c == null || !wanted.contains(id);
+            if (!changed) continue;
+            motion.remove(id);
+            d.stop();
+            RtspRelay relay = relays.get(id);
+            if (relay != null) relay.track().removeSink(d);
+            releaseRelayIfUnused(id);
+        }
+        for (String id : wanted) {
+            if (motion.containsKey(id)) continue;
+            String[] err = new String[1];
+            RtspRelay relay = ensureRelay(id, err);
+            if (relay == null) { Log.w(TAG, "motion " + id + ": " + err[0]); continue; }
+            CameraStore.Cam c = CameraStore.get(ctx, id);
+            MotionDetector d = new MotionDetector(id, c.motionLevel, c.motionSnapshot, MOTION_COOLDOWN_MS,
+                jpeg -> post(() -> sendMotion(id, jpeg)));
+            motion.put(id, d);
+            relay.track().addSink(d);
+        }
+    }
+
+    /** Motion seen: the server emails the owner (the snapshot, if allowed, is only passed on, never stored). */
+    private void sendMotion(String camera, byte[] jpeg) {
+        try {
+            CameraStore.Cam c = CameraStore.get(ctx, camera);
+            JSONObject ev = new JSONObject().put("type", "event").put("kind", "motion").put("camera", camera)
+                .put("name", c == null ? camera : c.name).put("at", System.currentTimeMillis());
+            if (jpeg != null && jpeg.length < 300_000) ev.put("snapshot", android.util.Base64.encodeToString(jpeg, android.util.Base64.NO_WRAP));
+            send(ev);
+        } catch (Exception e) { Log.w(TAG, "motion event", e); }
+    }
+
+    /** Called when the owner changes a camera's motion settings in the app. */
+    void motionChanged() { post(() -> { for (MotionDetector d : motion.values()) d.stop(); restartMotion(); }); }
+
+    private void restartMotion() {
+        for (String id : new ArrayList<>(motion.keySet())) {
+            MotionDetector d = motion.remove(id);
+            RtspRelay relay = relays.get(id);
+            if (relay != null) relay.track().removeSink(d);
+            releaseRelayIfUnused(id);
+        }
+        syncMotion();
+    }
+
+    /** "Stop recording" in the notification: every relayed camera too. */
+    static void stopCameraRecordings() {
+        NativeAgent a = current;
+        if (a != null) a.post(() -> { for (String c : new ArrayList<>(CAMERA_RECORDERS.keySet())) a.stopCameraRecording(c); });
+    }
+
     /** The relayed camera stopped playing: tell its viewers and close their connections. */
     private void relayFailed(String camera, String message) {
         for (String k : new ArrayList<>(peers.keySet())) {
             if (cameraOf(k).equals(camera)) { replyError(k, message); closePeer(k); }
         }
+        Recorder rec = CAMERA_RECORDERS.remove(camera);
+        if (rec != null) { lastError = message; rec.finish(this::changed); }
         RtspRelay r = relays.remove(camera);
         if (r != null) r.stop();
     }
 
+    /** On a dropped connection: stop the relays nobody records (viewers are gone); recordings carry on. */
     private void stopRelays() {
+        for (String c : new ArrayList<>(relays.keySet())) releaseRelayIfUnused(c);
+    }
+
+    /** Sharing stops: finish every relayed recording, then stop all relays. */
+    private void stopAllRelays() {
+        for (MotionDetector d : motion.values()) d.stop();
+        motion.clear();
+        for (String c : new ArrayList<>(CAMERA_RECORDERS.keySet())) {
+            Recorder r = CAMERA_RECORDERS.remove(c);
+            RtspRelay relay = relays.get(c);
+            if (relay != null && r != null) relay.track().removeSink(r);
+            if (r != null) r.finish(null);
+        }
         for (RtspRelay r : relays.values()) r.stop();
         relays.clear();
     }
@@ -510,12 +663,7 @@ class NativeAgent {
         PeerConnection pc = peers.remove(viewer);
         if (pc != null) pc.dispose();
         String camera = cameraOf(viewer);
-        if (!camera.isEmpty()) {
-            boolean watched = false;
-            for (String k : peers.keySet()) if (cameraOf(k).equals(camera)) watched = true;
-            RtspRelay r = watched ? null : relays.remove(camera);
-            if (r != null) r.stop(); // nobody watches this camera any more: stop pulling its stream
-        }
+        if (!camera.isEmpty()) releaseRelayIfUnused(camera); // nobody watches (or records) it any more: stop pulling it
         if (!cameraNeeded()) stopCamera(); // nobody watching or recording: release the camera (battery, privacy indicator)
         setState(state, peers.size(), null);
     }

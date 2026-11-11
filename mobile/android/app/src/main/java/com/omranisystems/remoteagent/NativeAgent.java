@@ -39,6 +39,9 @@ import org.webrtc.SurfaceTextureHelper;
 import org.webrtc.VideoSink;
 import org.webrtc.VideoSource;
 import org.webrtc.VideoTrack;
+import android.net.ConnectivityManager;
+import android.net.LinkProperties;
+import android.net.Network;
 import org.webrtc.audio.JavaAudioDeviceModule;
 
 /**
@@ -95,7 +98,20 @@ class NativeAgent {
     private VideoTrack videoTrack;
     private AudioSource audioSource;
     private AudioTrack audioTrack;
+    // One connection per viewer AND camera: key = viewerId + "|" + cameraId ("" = this phone's own camera).
+    // The dashboard can watch the phone and the cameras it relays (M7c) at the same time.
     private final Map<String, PeerConnection> peers = new HashMap<>();
+    private final Map<String, RtspRelay> relays = new HashMap<>(); // cameraId -> relay, while someone watches it
+
+    private static String key(String viewer, String camera) { return viewer + "|" + camera; }
+    private static String viewerOf(String key) { return key.substring(0, key.lastIndexOf('|')); }
+    private static String cameraOf(String key) { return key.substring(key.lastIndexOf('|') + 1); }
+
+    private int phoneWatchers() {
+        int n = 0;
+        for (String k : peers.keySet()) if (cameraOf(k).isEmpty()) n++;
+        return n;
+    }
 
     NativeAgent(Context ctx, String wsUrl, String token, String deviceId, String deviceName, boolean front, boolean audio, Listener l) {
         this.ctx = ctx.getApplicationContext();
@@ -122,17 +138,29 @@ class NativeAgent {
 
     /** Someone still needs the camera: a viewer, the phone's preview or a recording. */
     private boolean cameraNeeded() {
-        return !peers.isEmpty() || !PREVIEWS.isEmpty() || RECORDER != null;
+        return phoneWatchers() > 0 || !PREVIEWS.isEmpty() || RECORDER != null;
     }
 
     private void changed() {
         try { if (listener != null) listener.onChanged(); } catch (Throwable t) { Log.w(TAG, "listener", t); }
     }
 
+    private ConnectivityManager.NetworkCallback netWatch;
+
     void start() {
         current = this;
         frontNow = front;
         post(this::connect);
+        // joining / leaving the owner's Wi-Fi adds / removes the "discovery" capability on the dashboard
+        ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (cm != null) {
+            netWatch = new ConnectivityManager.NetworkCallback() {
+                @Override public void onAvailable(Network n) { post(NativeAgent.this::refreshCapabilities); }
+                @Override public void onLost(Network n) { post(NativeAgent.this::refreshCapabilities); }
+                @Override public void onLinkPropertiesChanged(Network n, LinkProperties lp) { post(NativeAgent.this::refreshCapabilities); }
+            };
+            try { cm.registerDefaultNetworkCallback(netWatch); } catch (Exception e) { Log.w(TAG, "network watch", e); netWatch = null; }
+        }
         // a "Check camera" view or a recording running across a restart: feed it from this agent's camera right away
         if (!PREVIEWS.isEmpty() || RECORDER != null) post(() -> { ensureFactory(); startCamera(); });
     }
@@ -142,9 +170,15 @@ class NativeAgent {
         if (!running || loop.isShutdown()) { if (done != null) done.run(); return; }
         post(() -> {
             if (current == this) current = null;
+            if (netWatch != null) {
+                ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
+                try { if (cm != null) cm.unregisterNetworkCallback(netWatch); } catch (Exception ignored) {}
+                netWatch = null;
+            }
             if (ws != null) ws.close(1000, "stopped");
             for (PeerConnection pc : peers.values()) pc.dispose();
             peers.clear();
+            stopRelays();
             stopCamera();
             state = "stopped"; watchers = 0; lastError = "";
             running = false; // from here on, late callbacks are dropped by post()
@@ -259,7 +293,7 @@ class NativeAgent {
                 post(() -> {
                     try {
                         JSONObject dev = new JSONObject().put("id", deviceId).put("name", deviceName).put("platform", "android");
-                        JSONArray caps = new JSONArray().put(new JSONObject().put("cap", "camera"));
+                        JSONArray caps = capabilities();
                         socket.send(new JSONObject().put("type", "hello").put("token", token).put("device", dev).put("capabilities", caps).toString());
                     } catch (Exception e) { Log.w(TAG, "hello", e); }
                 });
@@ -274,6 +308,7 @@ class NativeAgent {
         if (socket != ws) return; // an older socket closing late
         for (PeerConnection pc : peers.values()) pc.dispose();
         peers.clear();
+        stopRelays();
         if (!cameraNeeded()) stopCamera(); // an open preview or a recording keeps the camera while we reconnect
         if (!running) return;
         if (code == 4003) { // credentials rejected: retrying would only hit the rate limit
@@ -293,6 +328,69 @@ class NativeAgent {
 
     private void send(JSONObject o) { if (ws != null) ws.send(o.toString()); }
 
+    /** What this phone offers: the camera, plus camera discovery while on one of the owner's networks (M7). */
+    private JSONArray capabilities() throws Exception {
+        JSONObject camera = new JSONObject().put("cap", "camera");
+        // Cameras relayed from the owner's network (M7c): only while the phone is on it (it can't reach them elsewhere)
+        if (HomeNetwork.current(ctx).trusted) {
+            JSONArray list = new JSONArray();
+            for (CameraStore.Cam c : CameraStore.list(ctx)) {
+                if (c.relay) list.put(new JSONObject().put("id", c.id).put("name", c.name).put("source", "rtsp"));
+            }
+            if (list.length() > 0) {
+                JSONArray cams = new JSONArray().put(new JSONObject().put("id", "phone").put("name", "This phone"));
+                for (int i = 0; i < list.length(); i++) cams.put(list.getJSONObject(i));
+                camera.put("cameras", cams);
+            }
+        }
+        JSONArray caps = new JSONArray().put(camera);
+        JSONObject discovery = Discovery.capability(ctx);
+        if (discovery != null) caps.put(discovery);
+        return caps;
+    }
+
+    private String lastCaps = "";
+
+    /** Tells the server when the capabilities change (e.g. the phone joined or left the owner's Wi-Fi). */
+    private void refreshCapabilities() {
+        if (ws == null || !"online".equals(state)) return;
+        try {
+            JSONArray caps = capabilities();
+            if (caps.toString().equals(lastCaps)) return;
+            lastCaps = caps.toString();
+            send(new JSONObject().put("type", "caps").put("capabilities", caps));
+        } catch (Exception e) { Log.w(TAG, "caps", e); }
+    }
+
+    /** Called after the owner trusts / forgets a network in the app. */
+    void networkChanged() { post(this::refreshCapabilities); }
+
+    /** A dashboard action. Only "discovery / scan" exists on the phone: results stream back, then the full list. */
+    private void onAction(JSONObject msg) throws Exception {
+        String reqId = msg.optString("reqId");
+        if (!"discovery".equals(msg.optString("cap")) || !"scan".equals(msg.optString("do"))) {
+            send(new JSONObject().put("type", "result").put("reqId", reqId).put("ok", false).put("error", "not supported on this phone"));
+            return;
+        }
+        // A scan takes a few seconds: run it off the agent thread, reply through post() (dropped if stopped meanwhile)
+        Thread t = new Thread(() -> {
+            JSONObject result = new JSONObject();
+            try {
+                JSONArray hosts = Discovery.scan(ctx, host -> post(() -> {
+                    try { send(new JSONObject().put("type", "stream").put("reqId", reqId).put("chunk", host)); }
+                    catch (Exception e) { Log.w(TAG, "scan chunk", e); }
+                }));
+                result.put("type", "result").put("reqId", reqId).put("ok", true).put("data", new JSONObject().put("hosts", hosts));
+            } catch (Throwable e) {
+                try { result.put("type", "result").put("reqId", reqId).put("ok", false).put("error", e.getMessage() == null ? "scan failed" : e.getMessage()); }
+                catch (Exception ignored) {}
+            }
+            post(() -> send(result));
+        }, "discovery");
+        t.setDaemon(true);
+        t.start();
+    }
+
     private void onMessageText(String text) {
         try {
             JSONObject msg = new JSONObject(text);
@@ -300,14 +398,25 @@ class NativeAgent {
             if ("hello-ok".equals(type)) {
                 retryMs = 1000;
                 setState("online", peers.size(), "");
+                lastCaps = capabilities().toString();
             } else if ("signal".equals(type)) {
                 onSignal(msg.optString("from"), msg.optJSONObject("data"));
+            } else if ("action".equals(type)) {
+                onAction(msg);
             }
         } catch (Exception e) { Log.w(TAG, "message", e); }
     }
 
+    /** `to` is a connection key (viewer|camera) or a plain viewer id; replies name their camera so the dashboard can tell them apart. */
     private void signal(String to, JSONObject data) {
-        try { send(new JSONObject().put("type", "signal").put("to", to).put("data", data)); }
+        try {
+            if (to.contains("|")) {
+                String camera = cameraOf(to);
+                if (!camera.isEmpty()) data.put("camera", camera);
+                to = viewerOf(to);
+            }
+            send(new JSONObject().put("type", "signal").put("to", to).put("data", data));
+        }
         catch (Exception e) { Log.w(TAG, "signal", e); }
     }
 
@@ -316,10 +425,13 @@ class NativeAgent {
     private void onSignal(String from, JSONObject data) throws Exception {
         if (data == null) return;
         String kind = data.optString("kind");
-        PeerConnection pc = peers.get(from);
+        String camera = data.optString("camera", "");
+        if ("phone".equals(camera)) camera = "";
+        String k = key(from, camera);
+        PeerConnection pc = peers.get(k);
         if ("request".equals(kind)) {
-            if (pc != null) { peers.remove(from); pc.dispose(); }
-            openPeer(from);
+            if (pc != null) closePeer(k);
+            openPeer(k);
         } else if ("answer".equals(kind) && pc != null) {
             JSONObject sdp = data.getJSONObject("sdp");
             pc.setRemoteDescription(new Sdp("answer"), new SessionDescription(
@@ -330,16 +442,31 @@ class NativeAgent {
         }
     }
 
-    private void openPeer(String viewer) {
+    private void openPeer(String viewer) { // viewer = key(viewerId, cameraId)
         try {
             ensureFactory();
-            if (!startCamera()) { replyError(viewer, lastError); return; }
+            String camera = cameraOf(viewer);
+            VideoTrack video;
+            if (camera.isEmpty()) {
+                if (!startCamera()) { replyError(viewer, lastError); return; }
+                video = videoTrack;
+            } else {
+                RtspRelay relay = relays.get(camera);
+                if (relay == null) {
+                    CameraStore.Cam cam = CameraStore.get(ctx, camera);
+                    if (cam == null || !cam.relay) { replyError(viewer, "This camera isn't shared from the phone any more."); return; }
+                    if (!HomeNetwork.current(ctx).trusted) { replyError(viewer, "The phone isn't on the camera's network right now."); return; }
+                    relay = new RtspRelay(ctx, EGL.getEglBaseContext(), FACTORY, cam, msg -> post(() -> relayFailed(camera, msg)));
+                    relays.put(camera, relay);
+                }
+                video = relay.track();
+            }
             PeerConnection.RTCConfiguration cfg = new PeerConnection.RTCConfiguration(fetchIceServers());
             cfg.sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN;
             PeerConnection pc = FACTORY.createPeerConnection(cfg, new PeerObserver(viewer));
             if (pc == null) { replyError(viewer, "could not create the connection"); return; }
-            pc.addTrack(videoTrack, Collections.singletonList("cam"));
-            if (audioTrack != null) pc.addTrack(audioTrack, Collections.singletonList("cam"));
+            pc.addTrack(video, Collections.singletonList("cam"));
+            if (camera.isEmpty() && audioTrack != null) pc.addTrack(audioTrack, Collections.singletonList("cam"));
             peers.put(viewer, pc);
             setState(state, peers.size(), null);
             pc.createOffer(new Sdp("offer") {
@@ -360,6 +487,20 @@ class NativeAgent {
         }
     }
 
+    /** The relayed camera stopped playing: tell its viewers and close their connections. */
+    private void relayFailed(String camera, String message) {
+        for (String k : new ArrayList<>(peers.keySet())) {
+            if (cameraOf(k).equals(camera)) { replyError(k, message); closePeer(k); }
+        }
+        RtspRelay r = relays.remove(camera);
+        if (r != null) r.stop();
+    }
+
+    private void stopRelays() {
+        for (RtspRelay r : relays.values()) r.stop();
+        relays.clear();
+    }
+
     private void replyError(String viewer, String error) {
         try { signal(viewer, new JSONObject().put("kind", "error").put("error", error == null ? "camera error" : error)); }
         catch (Exception ignored) {}
@@ -368,6 +509,13 @@ class NativeAgent {
     private void closePeer(String viewer) {
         PeerConnection pc = peers.remove(viewer);
         if (pc != null) pc.dispose();
+        String camera = cameraOf(viewer);
+        if (!camera.isEmpty()) {
+            boolean watched = false;
+            for (String k : peers.keySet()) if (cameraOf(k).equals(camera)) watched = true;
+            RtspRelay r = watched ? null : relays.remove(camera);
+            if (r != null) r.stop(); // nobody watches this camera any more: stop pulling its stream
+        }
         if (!cameraNeeded()) stopCamera(); // nobody watching or recording: release the camera (battery, privacy indicator)
         setState(state, peers.size(), null);
     }

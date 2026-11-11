@@ -2,6 +2,7 @@ import { useState } from 'react';
 import CameraView from './CameraView.jsx';
 import ScriptRunner from './ScriptRunner.jsx';
 import ShellTerminal from './ShellTerminal.jsx';
+import DiscoveryPanel from './DiscoveryPanel.jsx';
 
 // Renders the controls for one capability on one device. Wires `camera`
 // (WebRTC), `gpio` (switch/slider), `scripts` (allowlisted runners) and `shell`
@@ -80,11 +81,15 @@ function ServoPin({ device, pin, action }) {
 
 export default function CapabilityControl({ device, cap, action, runStream, sendAction, sendSignal, onSignal }) {
   if (cap.cap === 'camera') {
-    return <CameraView device={device} sendSignal={sendSignal} onSignal={onSignal} />;
+    return <CameraView device={device} cap={cap} sendSignal={sendSignal} onSignal={onSignal} />;
   }
 
   if (cap.cap === 'scripts') {
     return <ScriptRunner device={device} cap={cap} runStream={runStream} />;
+  }
+
+  if (cap.cap === 'discovery') {
+    return <DiscoveryPanel device={device} cap={cap} runStream={runStream} />;
   }
 
   if (cap.cap === 'shell') {

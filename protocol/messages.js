@@ -12,7 +12,8 @@
 // Agent -> server
 const HELLO = 'hello';        // { type, token, device:{id,name,platform}, capabilities:[...] }
 const RESULT = 'result';      // { type, reqId, ok, data?, error? }
-const STREAM = 'stream';      // { type, reqId, chunk }   (reserved: terminal/script output)
+const STREAM = 'stream';      // { type, reqId, chunk }   (terminal/script output, discovery results)
+const CAPS = 'caps';          // { type, capabilities:[...] }  capabilities changed (e.g. joined the owner's Wi-Fi)
 
 // Server -> agent
 const HELLO_OK = 'hello-ok';  // { type }
@@ -40,6 +41,7 @@ const CAP = {
   SCRIPTS: 'scripts',
   SHELL: 'shell',
   MEDIA: 'media',
+  DISCOVERY: 'discovery', // { cap, network:{name, subnet} } while on the owner's network; do: scan (streams hosts)
 };
 
 function safeParse(raw) {
@@ -52,5 +54,5 @@ function safeParse(raw) {
 }
 
 module.exports = {
-  HELLO, RESULT, STREAM, HELLO_OK, ACTION, DEVICES, ERROR, SIGNAL, CAP, safeParse,
+  HELLO, RESULT, STREAM, CAPS, HELLO_OK, ACTION, DEVICES, ERROR, SIGNAL, CAP, safeParse,
 };

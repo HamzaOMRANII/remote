@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import MyNetwork from './MyNetwork.jsx';
 import { plugin } from '../native.js';
 import RecordingList from './RecordingList.jsx';
 
@@ -164,6 +165,8 @@ export default function NativeShare({ cred, onForget }) {
       )}
 
       {err && <div className="ctl-note err" style={{ textAlign: 'center' }}>{err}</div>}
+
+      <MyNetwork ra={ra} />
 
       <RecordingList ra={ra} items={recs} reload={loadRecs} onError={setErr} />
       {!sharing && <button type="button" className="secondary" onClick={onForget}>Use a different device access</button>}

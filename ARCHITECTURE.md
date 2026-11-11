@@ -291,6 +291,14 @@ https://claude.ai/artifact/JXwsnCcobFmRzHGix8mra2
 
 ## 10. Change log
 
+- **2026-11-11 — M7 camera discovery** (design: `docs/M7-camera-discovery.md`, validated by the owner).
+  New capability `discovery` (ONVIF WS-Discovery + camera ports, only on the owner's trusted network, scan on
+  demand, streamed results) in the Android app (1.8.0) and the laptop/Pi agent; new agent→server message `caps`
+  (live capability update). M7b (1.9.0): add a camera with its own login (ONVIF GetStreamUri or the brand's
+  usual paths, credentials AES-GCM in the Android Keystore), watch at home (Media3 RTSP). M7c (1.10.0) / M7d:
+  one device relays many cameras — `camera` capability may list `cameras:[{id,name}]`, every camera signal
+  carries `camera`, the dashboard shows a camera picker. Audit log redacts pass/secret/token/credential keys.
+
 - **2026-10-30** — IP cameras (M7-ish): the Python agent (laptop/PC/Pi, repo remote_agent) can relay local
   RTSP cameras to the dashboard. Each camera = its own provisioned device (id+token), shown as a normal
   camera tile; the agent pulls RTSP via aiortc (PyAV/ffmpeg) and relays over the existing WebRTC signaling

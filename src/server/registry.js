@@ -80,6 +80,15 @@ function createRegistry(events = {}) {
     try { events.online?.(device); } catch (e) { console.error('[registry] online hook', e); }
   }
 
+  // The agent's capabilities changed while connected (e.g. a phone joined the owner's Wi-Fi: "discovery").
+  function updateCapabilities(ws, capabilities) {
+    const entry = agents.get(ws._deviceId);
+    if (!entry || entry.ws !== ws) return;
+    entry.capabilities = capabilities.filter((c) => c && typeof c.cap === 'string').slice(0, 20);
+    console.log(`[registry] agent capabilities: ${ws._deviceId} (${entry.capabilities.map((c) => c.cap).join(', ')})`);
+    broadcastDevices();
+  }
+
   function removeAgent(ws) {
     const id = ws._deviceId;
     if (id && agents.get(id)?.ws === ws) {
@@ -107,6 +116,12 @@ function createRegistry(events = {}) {
   // be timed out — they stay pending until the agent sends a final result or the
   // device disconnects.
   const isStreaming = (cap, op) => (cap === 'shell' && op === 'open') || (cap === 'scripts' && op === 'run');
+  // Bounded streaming ops: results arrive in pieces, but they must end within this time.
+  const streamLimitMs = (cap, op) => (cap === 'discovery' && op === 'scan' ? 60000 : 15000);
+  // Secrets never reach the audit log (camera credentials added from the dashboard, M7).
+  const SECRET_KEYS = /pass|secret|token|credential/i;
+  const redact = (args) =>
+    JSON.stringify(args || {}, (k, v) => (k && SECRET_KEYS.test(k) && typeof v === 'string' ? '***' : v));
   // High-frequency keystroke/resize traffic isn't worth an audit line.
   const isNoisy = (cap, op) => cap === 'shell' && (op === 'input' || op === 'resize');
 
@@ -123,7 +138,7 @@ function createRegistry(events = {}) {
 
     if (!isNoisy(cap, op)) {
       const who = viewerWs._user ? ` user=${viewerWs._user}` : '';
-      console.log(`[audit]${who} device=${device} cap=${cap} do=${op} args=${JSON.stringify(args || {})}`);
+      console.log(`[audit]${who} device=${device} cap=${cap} do=${op} args=${redact(args)}`);
     }
     entry.ws.send(JSON.stringify({ type: 'action', reqId: serverReqId, cap, do: op, args }));
 
@@ -133,7 +148,7 @@ function createRegistry(events = {}) {
           reply(pending.get(serverReqId), { ok: false, error: 'timed out' });
           pending.delete(serverReqId);
         }
-      }, 15000).unref?.();
+      }, streamLimitMs(cap, op)).unref?.();
     }
     return null;
   }
@@ -155,7 +170,7 @@ function createRegistry(events = {}) {
   return {
     agents, viewers,
     addViewer, removeViewer, addAgent, removeAgent,
-    routeAction, routeFromAgent, deviceList,
+    routeAction, routeFromAgent, deviceList, updateCapabilities,
     signalToAgent, signalToViewer,
   };
 }

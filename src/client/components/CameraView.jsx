@@ -3,9 +3,16 @@ import { useEffect, useRef, useState } from 'react';
 // Viewer side of the camera (WebRTC consumer). Sends a `request` to the device
 // agent, which replies with an offer + its camera track; we answer and show the
 // stream. The device agent is the browser page at /connect on that device.
-export default function CameraView({ device, sendSignal, onSignal }) {
+// A device can offer several cameras (cap.cameras, M7c: a phone relaying the owner's IP cameras): the viewer
+// picks one, and every signal names it so the device can run one connection per camera.
+export default function CameraView({ device, cap = {}, sendSignal, onSignal }) {
+  const cameras = Array.isArray(cap.cameras) ? cap.cameras : [];
+  const [camera, setCamera] = useState(cameras[0]?.id || '');
+  const camRef = useRef(camera);
+  camRef.current = camera;
   const videoRef = useRef(null);
   const pcRef = useRef(null);
+  const send = (data) => sendSignal(device, camRef.current ? { ...data, camera: camRef.current } : data);
   const [status, setStatus] = useState('idle'); // idle | connecting | live | error
   const [err, setErr] = useState('');
 
@@ -26,26 +33,28 @@ export default function CameraView({ device, sendSignal, onSignal }) {
     pc.ontrack = (ev) => {
       if (videoRef.current) { videoRef.current.srcObject = ev.streams[0]; setStatus('live'); }
     };
-    pc.onicecandidate = (ev) => { if (ev.candidate) sendSignal(device, { kind: 'ice', candidate: ev.candidate }); };
+    pc.onicecandidate = (ev) => { if (ev.candidate) send({ kind: 'ice', candidate: ev.candidate }); };
     pc.onconnectionstatechange = () => {
       const s = pc.connectionState;
       if (s === 'failed' || s === 'disconnected') { setErr('connection lost'); setStatus('error'); }
     };
 
     // ask the device to start its camera and send us an offer
-    sendSignal(device, { kind: 'request' });
+    send({ kind: 'request' });
   }
 
   useEffect(() => {
     const off = onSignal(device, async (data) => {
       const pc = pcRef.current;
       if (!pc) return;
+      // replies for another camera of the same device (another tile, or the camera we just left)
+      if (camRef.current && (data.camera || 'phone') !== camRef.current) return;
       try {
         if (data.kind === 'offer') {
           await pc.setRemoteDescription(data.sdp);
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
-          sendSignal(device, { kind: 'answer', sdp: pc.localDescription });
+          send({ kind: 'answer', sdp: pc.localDescription });
         } else if (data.kind === 'ice' && data.candidate) {
           await pc.addIceCandidate(data.candidate);
         } else if (data.kind === 'error') {
@@ -60,6 +69,14 @@ export default function CameraView({ device, sendSignal, onSignal }) {
   return (
     <div className="cap-block">
       <div className="cap-head">Camera</div>
+      {cameras.length > 1 && (
+        <div className="seg cam-pick" role="group" aria-label="Which camera">
+          {cameras.map((c) => (
+            <button key={c.id} type="button" className={c.id === camera ? 'on' : ''}
+              onClick={() => { if (c.id !== camera) { stop(); setCamera(c.id); } }}>{c.name || c.id}</button>
+          ))}
+        </div>
+      )}
       <div className="cam-pane">
         <video ref={videoRef} autoPlay playsInline />
         {status !== 'live' && (

@@ -52,6 +52,7 @@ import java.util.List;
  *   cameras()                                        { cameras:[…] } (never the passwords)
  *   watchCamera({id, low})                           full-screen live view on the home network
  *   removeCamera({id})                               forgets it
+ *   setCameraRelay({id, on})                         show it on the dashboard (relayed by this phone while sharing)
  *   openWebPage({ip, port})                          the camera's own web page in the browser
  */
 @CapacitorPlugin(
@@ -444,8 +445,26 @@ public class AgentPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void setCameraRelay(PluginCall call) {
+        try {
+            CameraStore.Cam c = CameraStore.get(getContext(), call.getString("id", ""));
+            if (c == null) { call.reject("Unknown camera."); return; }
+            c.relay = call.getBoolean("on", false);
+            CameraStore.save(getContext(), c);
+            NativeAgent a = NativeAgent.current;
+            if (a != null) a.networkChanged(); // re-announce the camera list to the dashboard
+            call.resolve(JSObject.fromJSONObject(c.publicJson()));
+        } catch (Exception e) { call.reject(e.getMessage()); }
+    }
+
+    @PluginMethod
     public void removeCamera(PluginCall call) {
-        try { CameraStore.remove(getContext(), call.getString("id", "")); call.resolve(); }
+        try {
+            CameraStore.remove(getContext(), call.getString("id", ""));
+            NativeAgent a = NativeAgent.current;
+            if (a != null) a.networkChanged();
+            call.resolve();
+        }
         catch (Exception e) { call.reject(e.getMessage()); }
     }
 

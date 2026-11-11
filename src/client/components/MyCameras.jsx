@@ -56,6 +56,14 @@ export function CameraList({ ra, cameras, onChanged, onError }) {
             <span className="net-ip" style={{ fontWeight: 600 }}>{c.name}</span>
             <span className="mono rem-sub">{c.ip}</span>
           </div>
+          <div className="ctl-row" style={{ marginTop: 8 }}>
+            <span className="ctl-label">Show on dashboard<span className="ctl-pin">watch from anywhere while this phone shares</span></span>
+            <label className="switch">
+              <input type="checkbox" checked={!!c.relay} aria-label={`Show ${c.name} on the dashboard`}
+                onChange={(e) => ra.setCameraRelay({ id: c.id, on: e.target.checked }).then(onChanged).catch((err) => onError(err.message))} />
+              <span className="track" /><span className="knob" />
+            </label>
+          </div>
           <div className="action-btns" style={{ marginTop: 8 }}>
             <button onClick={() => ra.watchCamera({ id: c.id }).catch((e) => onError(e.message))}>Watch</button>
             {c.hasSub && <button className="secondary" onClick={() => ra.watchCamera({ id: c.id, low: true }).catch((e) => onError(e.message))}>Light</button>}

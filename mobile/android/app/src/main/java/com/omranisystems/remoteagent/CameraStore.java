@@ -31,11 +31,12 @@ final class CameraStore {
         String id = "", name = "", ip = "", brand = "", model = "", main = "", sub = "", user = "";
         String pass = ""; // in clear only in memory
         int webPort = 0;
+        boolean relay; // shown on the dashboard, relayed by this phone while it is on the camera's network (M7c)
 
         /** What the web page gets: everything except the password. */
         JSONObject publicJson() throws JSONException {
             return new JSONObject().put("id", id).put("name", name).put("ip", ip).put("brand", brand).put("model", model)
-                .put("main", main).put("sub", sub).put("user", user).put("webPort", webPort).put("hasSub", !sub.isEmpty());
+                .put("main", main).put("sub", sub).put("user", user).put("webPort", webPort).put("hasSub", !sub.isEmpty()).put("relay", relay);
         }
 
         /** rtsp://user:pass@host/path for the player (credentials URL-encoded). */
@@ -94,7 +95,7 @@ final class CameraStore {
 
     private static JSONObject toJson(Cam c) throws Exception {
         return new JSONObject().put("id", c.id).put("name", c.name).put("ip", c.ip).put("brand", c.brand).put("model", c.model)
-            .put("main", c.main).put("sub", c.sub).put("user", c.user).put("webPort", c.webPort)
+            .put("main", c.main).put("sub", c.sub).put("user", c.user).put("webPort", c.webPort).put("relay", c.relay)
             .put("pass", c.pass.isEmpty() ? "" : encrypt(c.pass));
     }
 
@@ -104,6 +105,7 @@ final class CameraStore {
         c.brand = o.optString("brand"); c.model = o.optString("model");
         c.main = o.optString("main"); c.sub = o.optString("sub"); c.user = o.optString("user");
         c.webPort = o.optInt("webPort");
+        c.relay = o.optBoolean("relay", false);
         String enc = o.optString("pass");
         c.pass = enc.isEmpty() ? "" : decrypt(enc);
         return c;

@@ -167,3 +167,8 @@ M7 DONE 2026-11-11 (session 2efdda84-…, owner said "start all the milestones i
 M8 PLAN (2026-11-11, owner chose all, built from session 2efdda84): M8a laptop/Pi agent starts by itself (systemd /
   Windows task) -> M8b record relayed IP cameras on the home phone -> M8c motion alerts (opt-in per camera).
   In parallel: TEST ROUND — owner tests 1.10.0 at home with real cameras; fix what fails between steps.
+M8 DONE 2026-11-11 (session 2efdda84): M8a remote_agent service/ installers (systemd / Windows task / macOS
+  LaunchAgent, merged to remote_agent main); M8b 1.11.0 record relayed cameras on the phone (app + dashboard Record,
+  notification names them); M8c 1.12.0 motion alerts (MotionCore + MotionDetector, agent 'event' -> server checks ->
+  alerts.motion email, snapshot only if allowed, 10 min/camera). All merged to main + pushed. Tests: MotionCoreCheck,
+  Playwright e2e with stand-in phone + local fake SMTP. STILL OPEN: owner's test round with real cameras (M7/M8).

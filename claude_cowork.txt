@@ -82,7 +82,8 @@ IP cameras ................ DONE (laptop) 2026-10-30, repo remote_agent commit d
                                    Config: "cameras":[{id,name,token,rtsp,audio?}]. NOT yet tested with a real
                                    camera (none available); handshake verified with a synthetic track.
                                    TODO next: same relay inside the Android app (user wants "all of them").
-M7 camera discovery ....... DONE 2026-11-11 (M7a-d, app 1.10.0): find my cameras on my Wi-Fi (ONVIF + port scan), view them at
+M7 camera discovery ....... DONE 2026-11-11 (M7a-d, app 1.10.0)
+M8 ...................... DONE 2026-11-11: agent service, record relayed cameras (1.11.0), motion alerts (1.12.0): find my cameras on my Wi-Fi (ONVIF + port scan), view them at
                                    home, relay to the dashboard; Android app first, then laptop/Pi agent. No password
                                    guessing. Plan: remote_app_session.txt, section "NEXT FEATURE — M7".
 

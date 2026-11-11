@@ -123,12 +123,17 @@ def serve(ip, port, handler):
 def accept_close(c): pass
 
 def onvif_discovery():
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.bind(("10.77.0.10", 3702))
+    # Like a real camera: joins the WS-Discovery multicast group (and also answers probes sent to it directly).
+    # Answers go out from 10.77.0.10 so the scanner sees the camera's own address.
+    reply = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); reply.bind(("10.77.0.10", 0))
+    group = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    group.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); group.bind(("", 3702))
+    group.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, socket.inet_aton("239.255.255.250") + socket.inet_aton("10.77.0.10"))
     while True:
-        data, addr = s.recvfrom(65535)
+        data, addr = group.recvfrom(65535)
         m = re.search(rb"MessageID>([^<]+)<", data)
         if b"Probe" in data:
-            s.sendto(PROBE_MATCH.format(rel=(m.group(1).decode() if m else "")).encode(), addr)
+            reply.sendto(PROBE_MATCH.format(rel=(m.group(1).decode() if m else "")).encode(), addr)
 
 SERVICES = [("10.77.0.10", 80, onvif_http), ("10.77.0.10", 554, lambda c: rtsp(c, "10.77.0.10")),
             ("10.77.0.11", 554, lambda c: rtsp(c, "10.77.0.11")), ("10.77.0.11", 37777, accept_close),

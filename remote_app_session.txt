@@ -4,7 +4,10 @@ Project: Remote (remote.omranisystems.com) + its Android app + remote_agent (lap
 User: homrani555@gmail.com
 Date: 2026-10-29 (last updated 2026-10-30)
 
-RESUME POINT (2026-10-30): M6 done (app 1.7.0) + IP cameras for laptop done (remote_agent d2bc9f4, pushed).
+RESUME POINT (2026-11-11): M7a-M7d DONE (built in session 2efdda84). App 1.10.0 live. Owner to test on home Wi-Fi.
+  (was: START M7a.) Architecture VALIDATED: docs/M7-camera-discovery.md (D1 one relay/many cameras,
+  D3 scan on button only, D2 default = credentials on the relay only — confirm at M7b). Order M7a -> M7b -> M7c -> M7d.
+PREVIOUS RESUME POINT (2026-10-30): M6 done (app 1.7.0) + IP cameras for laptop done (remote_agent d2bc9f4, pushed).
   NEXT: build the same IP-camera relay INSIDE the Android app (spare phone as relay); then optional PC helper.
   PENDING user tests: 1.7.0 on the phone; a real RTSP camera on the laptop (`pip install aiortc`, --scan, add
   to config.json "cameras"). See the IP CAMERAS and M6 sections below.
@@ -125,3 +128,38 @@ OPEN ITEMS / TO CHECK
 FIX 2026-10-30: login page looked outdated (user saw "1.5", downloaded 1.4). Causes: fixed APK URL served
 from Cloudflare/browser cache (CF caches .apk, 4 h); the "Have Remote 1.5 or older" note read like a version.
 Now links read /download/latest.json and use remote-agent.apk?v=<version>; the page shows "Get the Android app 1.6.0".
+
+NEXT FEATURE — M7 CAMERA DISCOVERY ON MY NETWORK (decided 2026-11-11 with the owner, in session 2efdda84)
+--------------------------------------------------------------------------------------------------------
+Owner's idea: "when I am connected to my access point I should discover all my cameras in the network and
+access them from the open ports". Owner's answers: build it in BOTH the Android app and the laptop/Pi agent;
+watch at home AND from anywhere (relay to the dashboard); build it in THIS session (remote_app_session).
+
+Design agreed:
+ 1. "My network": the owner marks his Wi-Fi once (SSID/BSSID saved); discovery only runs on a trusted network,
+    never on public Wi-Fi. (Android: needs location permission to read the SSID.)
+ 2. Discovery (owned devices only):
+    - ONVIF WS-Discovery: UDP multicast 239.255.255.250:3702 Probe -> ProbeMatch (XAddrs, model, brand).
+    - Port check on the local /24 (from the phone's IP + netmask): 554, 8554 (RTSP), 80, 8080, 443 (web UI),
+      8000 (Hikvision), 37777 (Dahua), 1935 (RTMP). Short timeouts, limited parallelism.
+    - Result list: IP, MAC vendor if known, brand/model (ONVIF), open ports, guessed type.
+ 3. Access: the owner types the camera's OWN username/password once (stored encrypted on the phone /
+    agent config). NO default-password guessing or brute force (security + legal; tell the owner why).
+    - RTSP (554/8554): play the stream; ONVIF GetStreamUri to find the right path, else common paths.
+    - Web port (80/8080/443): open the camera's own page in an in-app view.
+ 4. From anywhere: "Add to dashboard" provisions the camera as its own device (like remote_agent cameras) and
+    the phone (spare phone at home) or laptop/Pi relays RTSP -> WebRTC through the existing TURN.
+ Order: Android app first (discovery + local view + relay), then the same discovery in remote_agent
+ (extend agent/scan.py: ONVIF + more ports; relay already exists in agent/camera.py).
+ Testing: the owner has real cameras at home; Claude has none -> test with a synthetic RTSP source
+ (e.g. ffmpeg/mediamtx on the box) and ask the owner to test on his Wi-Fi.
+
+M7 DONE 2026-11-11 (session 2efdda84-…, owner said "start all the milestones in series"):
+  M7a 1.8.0  discovery in the app + dashboard Network panel (NetworkScanner/HomeNetwork/Discovery.java, 'caps' msg)
+  M7b 1.9.0  add + watch at home (OnvifClient, RtspProbe, CameraStore Keystore AES-GCM, CameraPlayerActivity Media3)
+  M7c 1.10.0 relay to the dashboard, one phone many cameras (RtspRelay.java, peers keyed viewer|camera, picker)
+  M7d        remote_agent: same discovery (scan.py), discovery.networks, attached cameras (no token) in the picker
+  Tests: mobile/test/camlab.py (isolated netns lab: ONVIF multicast + SOAP digest, RTSP Digest), NetworkScannerCheck,
+  CameraAccessCheck (JVM), remote_agent/tests/check_scan.py + check_attached.py, Playwright e2e for every step.
+  NOT tested: real video (no camera / no aiortc here) -> owner tests at home with real cameras.
+  D2 default applied: camera passwords only on the relay device (encrypted).

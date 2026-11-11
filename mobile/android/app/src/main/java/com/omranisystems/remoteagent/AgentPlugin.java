@@ -46,6 +46,13 @@ import java.util.List;
  *   trustNetwork()                                   asks for location access, marks the current Wi-Fi as "my network"
  *   forgetNetwork({name})                            removes a trusted network
  *   scanNetwork()                                    { hosts:[…] } cameras on my network; "networkScan" events while it runs
+ *   addCamera({ip, ports, manufacturer, model, onvif, name, username, password})
+ *                                                    finds its streams (ONVIF, else the brand's usual paths) with the
+ *                                                    owner's credentials, saves it encrypted on this phone -> camera
+ *   cameras()                                        { cameras:[…] } (never the passwords)
+ *   watchCamera({id, low})                           full-screen live view on the home network
+ *   removeCamera({id})                               forgets it
+ *   openWebPage({ip, port})                          the camera's own web page in the browser
  */
 @CapacitorPlugin(
     name = "RemoteAgent",
@@ -364,5 +371,89 @@ public class AgentPlugin extends Plugin {
                 call.reject(e.getMessage() == null ? "Scan failed." : e.getMessage());
             }
         }, "discovery").start();
+    }
+
+    // ---- the owner's cameras on this phone (M7b) -----------------------------------------------------------
+
+    @PluginMethod
+    public void addCamera(PluginCall call) {
+        String ip = call.getString("ip", "");
+        String user = call.getString("username", "");
+        String pass = call.getString("password", "");
+        String brand = call.getString("manufacturer", "");
+        String onvif = call.getString("onvif", "");
+        org.json.JSONArray ports = call.getArray("ports", new com.getcapacitor.JSArray());
+        new Thread(() -> {
+            try {
+                if (!HomeNetwork.current(getContext()).trusted) throw new Exception("Cameras can only be added on your network.");
+                java.util.Set<Integer> open = new java.util.HashSet<>();
+                for (int i = 0; i < ports.length(); i++) open.add(ports.optInt(i));
+                CameraStore.Cam cam = new CameraStore.Cam();
+                cam.ip = ip; cam.user = user; cam.pass = pass; cam.brand = brand;
+                cam.model = call.getString("model", "");
+                cam.name = call.getString("name", "").trim();
+                if (cam.name.isEmpty()) cam.name = (brand.isEmpty() ? "Camera" : brand) + " " + ip;
+                cam.webPort = open.contains(80) ? 80 : open.contains(8080) ? 8080 : open.contains(443) ? 443 : 0;
+
+                // 1. ONVIF tells the exact stream addresses
+                if (!onvif.isEmpty()) {
+                    try {
+                        java.util.List<String> uris = new OnvifClient(user, pass, 2500).streamUris(onvif);
+                        if (!uris.isEmpty()) { cam.main = uris.get(0); cam.sub = uris.size() > 1 ? uris.get(1) : ""; }
+                    } catch (OnvifClient.AuthFailed e) {
+                        throw e;
+                    } catch (Exception e) { /* ONVIF unusable: fall back to the usual paths below */ }
+                }
+                RtspProbe probe = new RtspProbe(user, pass, 2500);
+                // 2. confirm the stream with the credentials, or find it among the brand's usual paths
+                if (!cam.main.isEmpty()) {
+                    RtspProbe.Result r = probe.describe(cam.main);
+                    if (r == RtspProbe.Result.AUTH_FAILED) throw new OnvifClient.AuthFailed();
+                    if (r != RtspProbe.Result.OK) cam.main = "";
+                }
+                if (cam.main.isEmpty()) {
+                    int rtsp = open.contains(554) ? 554 : open.contains(8554) ? 8554 : 554;
+                    RtspProbe.Found f = probe.find(ip, rtsp, brand);
+                    cam.main = f.main; cam.sub = f.sub == null ? "" : f.sub;
+                }
+                call.resolve(JSObject.fromJSONObject(CameraStore.save(getContext(), cam).publicJson()));
+            } catch (Throwable e) {
+                call.reject(e.getMessage() == null ? "Couldn't add this camera." : e.getMessage());
+            }
+        }, "add-camera").start();
+    }
+
+    @PluginMethod
+    public void cameras(PluginCall call) {
+        try {
+            org.json.JSONArray arr = new org.json.JSONArray();
+            for (CameraStore.Cam c : CameraStore.list(getContext())) arr.put(c.publicJson());
+            JSObject res = new JSObject();
+            res.put("cameras", arr);
+            call.resolve(res);
+        } catch (Exception e) { call.reject(e.getMessage()); }
+    }
+
+    @PluginMethod
+    public void watchCamera(PluginCall call) {
+        Intent i = new Intent(getContext(), CameraPlayerActivity.class)
+            .putExtra(CameraPlayerActivity.EXTRA_ID, call.getString("id", ""))
+            .putExtra(CameraPlayerActivity.EXTRA_LOW, call.getBoolean("low", false));
+        getActivity().startActivity(i);
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void removeCamera(PluginCall call) {
+        try { CameraStore.remove(getContext(), call.getString("id", "")); call.resolve(); }
+        catch (Exception e) { call.reject(e.getMessage()); }
+    }
+
+    @PluginMethod
+    public void openWebPage(PluginCall call) {
+        int port = call.getInt("port", 80);
+        String url = (port == 443 ? "https://" : "http://") + call.getString("ip", "") + (port == 80 || port == 443 ? "" : ":" + port) + "/";
+        getActivity().startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+        call.resolve();
     }
 }

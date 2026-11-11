@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import NetworkHosts, { mergeHost } from './NetworkHosts.jsx';
+import { AddCameraForm, CameraList, canAdd, webPortOf } from './MyCameras.jsx';
 
 // The app's "My network" section (M7): mark this Wi-Fi as the owner's network, then find the cameras on it.
 // Works without sharing; while sharing, the dashboard can also scan through this phone.
@@ -9,10 +10,14 @@ export default function MyNetwork({ ra }) {
   const [scanning, setScanning] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [cameras, setCameras] = useState([]);
+  const [adding, setAdding] = useState('');
 
   const refresh = () => ra.networkStatus().then(setNet).catch(() => {});
+  const loadCameras = () => ra.cameras().then((r) => setCameras(r.cameras || [])).catch(() => {});
   useEffect(() => {
     refresh();
+    loadCameras();
     const t = setInterval(refresh, 5000);
     return () => clearInterval(t);
   }, []);
@@ -48,7 +53,26 @@ export default function MyNetwork({ ra }) {
             <button disabled={scanning} onClick={scan}>{scanning ? 'Scanning…' : 'Find my cameras'}</button>
             <button className="secondary" disabled={busy || scanning} onClick={forget}>Not my network</button>
           </div>
-          {(scanning || hosts.length > 0) && <div style={{ marginTop: 12 }}><NetworkHosts hosts={hosts} scanning={scanning} /></div>}
+          <CameraList ra={ra} cameras={cameras} onChanged={loadCameras} onError={setErr} />
+          {(scanning || hosts.length > 0) && (
+            <div style={{ marginTop: 12 }}>
+              <NetworkHosts hosts={hosts} scanning={scanning} actions={(h) => {
+                const saved = cameras.some((c) => c.ip === h.ip);
+                const web = webPortOf(h);
+                if (adding === h.ip) {
+                  return <AddCameraForm ra={ra} host={h} onCancel={() => setAdding('')}
+                    onAdded={() => { setAdding(''); loadCameras(); }} />;
+                }
+                return (
+                  <div className="action-btns" style={{ marginTop: 8 }}>
+                    {canAdd(h) && !saved && <button className="secondary" onClick={() => setAdding(h.ip)}>Add</button>}
+                    {saved && <span className="mono rem-sub">saved</span>}
+                    {web && <button className="secondary" onClick={() => ra.openWebPage({ ip: h.ip, port: web })}>Web page</button>}
+                  </div>
+                );
+              }} />
+            </div>
+          )}
         </>
       ) : (
         <>

@@ -40,6 +40,12 @@
             android:exported="false"
             android:screenOrientation="unspecified"
             android:theme="@style/AppTheme.NoActionBar" />
+        <!-- M7b: watch a camera on the home network -->
+        <activity
+            android:name=".CameraPlayerActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:theme="@style/AppTheme.NoActionBar" />
 
         <!-- After a phone restart / app update: resume sharing (Android 10-) or ask to tap to resume (11+) -->
         <receiver

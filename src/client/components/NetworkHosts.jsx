@@ -14,7 +14,7 @@ export function mergeHost(list, host) {
 const rank = (h) => (h.kind === 'camera' ? 0 : h.kind === 'maybe' ? 1 : 2);
 const ipNum = (ip) => ip.split('.').reduce((n, o) => n * 256 + Number(o), 0);
 
-export default function NetworkHosts({ hosts, scanning }) {
+export default function NetworkHosts({ hosts, scanning, actions }) {
   const shown = hosts.slice().sort((a, b) => rank(a) - rank(b) || ipNum(a.ip) - ipNum(b.ip));
   if (!shown.length) {
     return <p className="muted rem-sub" style={{ margin: 0 }}>{scanning ? 'Looking…' : 'Nothing found yet.'}</p>;
@@ -36,6 +36,7 @@ export default function NetworkHosts({ hosts, scanning }) {
             ))}
             {h.onvif && <span className="net-port mono" title={h.onvif}>ONVIF</span>}
           </div>
+          {actions && actions(h)}
         </li>
       ))}
     </ul>

@@ -172,3 +172,7 @@ M8 DONE 2026-11-11 (session 2efdda84): M8a remote_agent service/ installers (sys
   notification names them); M8c 1.12.0 motion alerts (MotionCore + MotionDetector, agent 'event' -> server checks ->
   alerts.motion email, snapshot only if allowed, 10 min/camera). All merged to main + pushed. Tests: MotionCoreCheck,
   Playwright e2e with stand-in phone + local fake SMTP. STILL OPEN: owner's test round with real cameras (M7/M8).
+
+SESSION SAVED 2026-11-11 — M7 + M8 were built in session 2efdda84-8bc2-4622-a389-04edd3e39c08 (resume: cd /projects && claude --resume 2efdda84-8bc2-4622-a389-04edd3e39c08).
+  App 1.12.0 live, remote + remote_agent main pushed. NEXT: owner's real-camera test round (find/add/watch/relay/
+  record/motion), then fixes. Ideas left: PWA, media transfer, relay inside the app for the laptop's cameras.

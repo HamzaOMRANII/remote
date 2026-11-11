@@ -126,6 +126,8 @@ function attach(server, { auth, registry, devices }) {
 
       if (msg.type === proto.RESULT || msg.type === proto.STREAM) {
         registry.routeFromAgent(msg);
+      } else if (msg.type === proto.EVENT) {
+        registry.agentEvent(ws, msg);
       } else if (msg.type === proto.CAPS && Array.isArray(msg.capabilities)) {
         registry.updateCapabilities(ws, msg.capabilities);
       } else if (msg.type === proto.SIGNAL) {

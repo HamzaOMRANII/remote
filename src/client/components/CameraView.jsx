@@ -98,6 +98,7 @@ export default function CameraView({ device, cap = {}, action, sendSignal, onSig
         {status === 'idle' || status === 'error'
           ? <button onClick={start}>Start camera</button>
           : <button className="secondary" onClick={stop}>Stop</button>}
+        {current && current.motion && <span className="mono rem-sub" title="Set in the Remote app on that phone">motion alerts on</span>}
         {current && current.record && action && (
           <button className={`rec-btn ${current.recording ? 'on' : ''}`} disabled={recBusy} onClick={toggleRecord}
             title="Recorded on the phone at home (Gallery › Movies › Remote), never on the server">

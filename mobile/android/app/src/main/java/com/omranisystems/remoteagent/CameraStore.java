@@ -32,11 +32,14 @@ final class CameraStore {
         String pass = ""; // in clear only in memory
         int webPort = 0;
         boolean relay; // shown on the dashboard, relayed by this phone while it is on the camera's network (M7c)
+        boolean motion, motionSnapshot; // motion alerts by email (M8c); a snapshot in the email only if allowed
+        String motionLevel = "medium";  // low | medium | high
 
         /** What the web page gets: everything except the password. */
         JSONObject publicJson() throws JSONException {
             return new JSONObject().put("id", id).put("name", name).put("ip", ip).put("brand", brand).put("model", model)
-                .put("main", main).put("sub", sub).put("user", user).put("webPort", webPort).put("hasSub", !sub.isEmpty()).put("relay", relay);
+                .put("main", main).put("sub", sub).put("user", user).put("webPort", webPort).put("hasSub", !sub.isEmpty()).put("relay", relay)
+                .put("motion", motion).put("motionSnapshot", motionSnapshot).put("motionLevel", motionLevel);
         }
 
         /** rtsp://user:pass@host/path for the player (credentials URL-encoded). */
@@ -96,6 +99,7 @@ final class CameraStore {
     private static JSONObject toJson(Cam c) throws Exception {
         return new JSONObject().put("id", c.id).put("name", c.name).put("ip", c.ip).put("brand", c.brand).put("model", c.model)
             .put("main", c.main).put("sub", c.sub).put("user", c.user).put("webPort", c.webPort).put("relay", c.relay)
+            .put("motion", c.motion).put("motionSnapshot", c.motionSnapshot).put("motionLevel", c.motionLevel)
             .put("pass", c.pass.isEmpty() ? "" : encrypt(c.pass));
     }
 
@@ -106,6 +110,9 @@ final class CameraStore {
         c.main = o.optString("main"); c.sub = o.optString("sub"); c.user = o.optString("user");
         c.webPort = o.optInt("webPort");
         c.relay = o.optBoolean("relay", false);
+        c.motion = o.optBoolean("motion", false);
+        c.motionSnapshot = o.optBoolean("motionSnapshot", false);
+        c.motionLevel = o.optString("motionLevel", "medium");
         String enc = o.optString("pass");
         c.pass = enc.isEmpty() ? "" : decrypt(enc);
         return c;

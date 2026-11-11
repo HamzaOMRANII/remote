@@ -42,6 +42,10 @@ import java.util.List;
  *   openUrl({url})                                   opens a saved cloud link in the browser / Drive app
  *   installUpdate({url, sha256})                     downloads the new APK, checks it, opens Android's installer
  *   updateProgress()                                 { progress: -1 idle | 0-100 downloading }
+ *   networkStatus()                                  { wifi, name, trusted, subnet, permission, locationOn, trustedNames }
+ *   trustNetwork()                                   asks for location access, marks the current Wi-Fi as "my network"
+ *   forgetNetwork({name})                            removes a trusted network
+ *   scanNetwork()                                    { hosts:[…] } cameras on my network; "networkScan" events while it runs
  */
 @CapacitorPlugin(
     name = "RemoteAgent",
@@ -49,6 +53,8 @@ import java.util.List;
         @Permission(alias = "camera", strings = { Manifest.permission.CAMERA }),
         @Permission(alias = "microphone", strings = { Manifest.permission.RECORD_AUDIO }),
         @Permission(alias = "notifications", strings = { Manifest.permission.POST_NOTIFICATIONS }),
+        // Android shows the Wi-Fi name only to apps with location access (camera discovery, M7)
+        @Permission(alias = "location", strings = { Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION }),
     }
 )
 public class AgentPlugin extends Plugin {
@@ -295,5 +301,68 @@ public class AgentPlugin extends Plugin {
     private boolean batteryExempt() {
         PowerManager pm = (PowerManager) getContext().getSystemService(Context.POWER_SERVICE);
         return pm.isIgnoringBatteryOptimizations(getContext().getPackageName());
+    }
+
+    // ---- camera discovery on the owner's network (M7) ------------------------------------------------------
+
+    private JSObject networkJson() {
+        HomeNetwork.Status st = HomeNetwork.current(getContext());
+        JSObject o = new JSObject();
+        o.put("wifi", st.wifi);
+        o.put("name", st.ssid);
+        o.put("trusted", st.trusted);
+        o.put("subnet", st.subnetText());
+        o.put("permission", st.permission);
+        o.put("locationOn", st.locationOn);
+        o.put("trustedNames", new org.json.JSONArray(HomeNetwork.trusted(getContext())));
+        return o;
+    }
+
+    @PluginMethod
+    public void networkStatus(PluginCall call) { call.resolve(networkJson()); }
+
+    @PluginMethod
+    public void trustNetwork(PluginCall call) {
+        if (getPermissionState("location") != PermissionState.GRANTED) requestPermissionForAlias("location", call, "afterLocation");
+        else afterLocation(call);
+    }
+
+    @PermissionCallback
+    private void afterLocation(PluginCall call) {
+        if (getPermissionState("location") != PermissionState.GRANTED) {
+            call.reject("Location access is needed to read your Wi-Fi name.");
+            return;
+        }
+        HomeNetwork.Status st = HomeNetwork.current(getContext());
+        if (!st.wifi) { call.reject("Connect this phone to your Wi-Fi first."); return; }
+        if (!st.locationOn) { call.reject("Turn on Location in Android's quick settings, then try again."); return; }
+        if (!HomeNetwork.trustCurrent(getContext())) { call.reject("Couldn't read the Wi-Fi name. Try again in a moment."); return; }
+        NativeAgent a = NativeAgent.current;
+        if (a != null) a.networkChanged();
+        call.resolve(networkJson());
+    }
+
+    @PluginMethod
+    public void forgetNetwork(PluginCall call) {
+        HomeNetwork.forget(getContext(), call.getString("name", ""));
+        NativeAgent a = NativeAgent.current;
+        if (a != null) a.networkChanged();
+        call.resolve(networkJson());
+    }
+
+    @PluginMethod
+    public void scanNetwork(PluginCall call) {
+        new Thread(() -> {
+            try {
+                org.json.JSONArray hosts = Discovery.scan(getContext(), host -> {
+                    try { notifyListeners("networkScan", JSObject.fromJSONObject(host)); } catch (JSONException ignored) {}
+                });
+                JSObject res = new JSObject();
+                res.put("hosts", hosts);
+                call.resolve(res);
+            } catch (Throwable e) {
+                call.reject(e.getMessage() == null ? "Scan failed." : e.getMessage());
+            }
+        }, "discovery").start();
     }
 }

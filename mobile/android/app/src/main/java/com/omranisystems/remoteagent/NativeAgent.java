@@ -39,6 +39,9 @@ import org.webrtc.SurfaceTextureHelper;
 import org.webrtc.VideoSink;
 import org.webrtc.VideoSource;
 import org.webrtc.VideoTrack;
+import android.net.ConnectivityManager;
+import android.net.LinkProperties;
+import android.net.Network;
 import org.webrtc.audio.JavaAudioDeviceModule;
 
 /**
@@ -129,10 +132,22 @@ class NativeAgent {
         try { if (listener != null) listener.onChanged(); } catch (Throwable t) { Log.w(TAG, "listener", t); }
     }
 
+    private ConnectivityManager.NetworkCallback netWatch;
+
     void start() {
         current = this;
         frontNow = front;
         post(this::connect);
+        // joining / leaving the owner's Wi-Fi adds / removes the "discovery" capability on the dashboard
+        ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (cm != null) {
+            netWatch = new ConnectivityManager.NetworkCallback() {
+                @Override public void onAvailable(Network n) { post(NativeAgent.this::refreshCapabilities); }
+                @Override public void onLost(Network n) { post(NativeAgent.this::refreshCapabilities); }
+                @Override public void onLinkPropertiesChanged(Network n, LinkProperties lp) { post(NativeAgent.this::refreshCapabilities); }
+            };
+            try { cm.registerDefaultNetworkCallback(netWatch); } catch (Exception e) { Log.w(TAG, "network watch", e); netWatch = null; }
+        }
         // a "Check camera" view or a recording running across a restart: feed it from this agent's camera right away
         if (!PREVIEWS.isEmpty() || RECORDER != null) post(() -> { ensureFactory(); startCamera(); });
     }
@@ -142,6 +157,11 @@ class NativeAgent {
         if (!running || loop.isShutdown()) { if (done != null) done.run(); return; }
         post(() -> {
             if (current == this) current = null;
+            if (netWatch != null) {
+                ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
+                try { if (cm != null) cm.unregisterNetworkCallback(netWatch); } catch (Exception ignored) {}
+                netWatch = null;
+            }
             if (ws != null) ws.close(1000, "stopped");
             for (PeerConnection pc : peers.values()) pc.dispose();
             peers.clear();
@@ -259,7 +279,7 @@ class NativeAgent {
                 post(() -> {
                     try {
                         JSONObject dev = new JSONObject().put("id", deviceId).put("name", deviceName).put("platform", "android");
-                        JSONArray caps = new JSONArray().put(new JSONObject().put("cap", "camera"));
+                        JSONArray caps = capabilities();
                         socket.send(new JSONObject().put("type", "hello").put("token", token).put("device", dev).put("capabilities", caps).toString());
                     } catch (Exception e) { Log.w(TAG, "hello", e); }
                 });
@@ -293,6 +313,56 @@ class NativeAgent {
 
     private void send(JSONObject o) { if (ws != null) ws.send(o.toString()); }
 
+    /** What this phone offers: the camera, plus camera discovery while on one of the owner's networks (M7). */
+    private JSONArray capabilities() throws Exception {
+        JSONArray caps = new JSONArray().put(new JSONObject().put("cap", "camera"));
+        JSONObject discovery = Discovery.capability(ctx);
+        if (discovery != null) caps.put(discovery);
+        return caps;
+    }
+
+    private String lastCaps = "";
+
+    /** Tells the server when the capabilities change (e.g. the phone joined or left the owner's Wi-Fi). */
+    private void refreshCapabilities() {
+        if (ws == null || !"online".equals(state)) return;
+        try {
+            JSONArray caps = capabilities();
+            if (caps.toString().equals(lastCaps)) return;
+            lastCaps = caps.toString();
+            send(new JSONObject().put("type", "caps").put("capabilities", caps));
+        } catch (Exception e) { Log.w(TAG, "caps", e); }
+    }
+
+    /** Called after the owner trusts / forgets a network in the app. */
+    void networkChanged() { post(this::refreshCapabilities); }
+
+    /** A dashboard action. Only "discovery / scan" exists on the phone: results stream back, then the full list. */
+    private void onAction(JSONObject msg) throws Exception {
+        String reqId = msg.optString("reqId");
+        if (!"discovery".equals(msg.optString("cap")) || !"scan".equals(msg.optString("do"))) {
+            send(new JSONObject().put("type", "result").put("reqId", reqId).put("ok", false).put("error", "not supported on this phone"));
+            return;
+        }
+        // A scan takes a few seconds: run it off the agent thread, reply through post() (dropped if stopped meanwhile)
+        Thread t = new Thread(() -> {
+            JSONObject result = new JSONObject();
+            try {
+                JSONArray hosts = Discovery.scan(ctx, host -> post(() -> {
+                    try { send(new JSONObject().put("type", "stream").put("reqId", reqId).put("chunk", host)); }
+                    catch (Exception e) { Log.w(TAG, "scan chunk", e); }
+                }));
+                result.put("type", "result").put("reqId", reqId).put("ok", true).put("data", new JSONObject().put("hosts", hosts));
+            } catch (Throwable e) {
+                try { result.put("type", "result").put("reqId", reqId).put("ok", false).put("error", e.getMessage() == null ? "scan failed" : e.getMessage()); }
+                catch (Exception ignored) {}
+            }
+            post(() -> send(result));
+        }, "discovery");
+        t.setDaemon(true);
+        t.start();
+    }
+
     private void onMessageText(String text) {
         try {
             JSONObject msg = new JSONObject(text);
@@ -300,8 +370,11 @@ class NativeAgent {
             if ("hello-ok".equals(type)) {
                 retryMs = 1000;
                 setState("online", peers.size(), "");
+                lastCaps = capabilities().toString();
             } else if ("signal".equals(type)) {
                 onSignal(msg.optString("from"), msg.optJSONObject("data"));
+            } else if ("action".equals(type)) {
+                onAction(msg);
             }
         } catch (Exception e) { Log.w(TAG, "message", e); }
     }

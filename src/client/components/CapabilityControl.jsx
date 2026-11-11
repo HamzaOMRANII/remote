@@ -2,6 +2,7 @@ import { useState } from 'react';
 import CameraView from './CameraView.jsx';
 import ScriptRunner from './ScriptRunner.jsx';
 import ShellTerminal from './ShellTerminal.jsx';
+import DiscoveryPanel from './DiscoveryPanel.jsx';
 
 // Renders the controls for one capability on one device. Wires `camera`
 // (WebRTC), `gpio` (switch/slider), `scripts` (allowlisted runners) and `shell`
@@ -85,6 +86,10 @@ export default function CapabilityControl({ device, cap, action, runStream, send
 
   if (cap.cap === 'scripts') {
     return <ScriptRunner device={device} cap={cap} runStream={runStream} />;
+  }
+
+  if (cap.cap === 'discovery') {
+    return <DiscoveryPanel device={device} cap={cap} runStream={runStream} />;
   }
 
   if (cap.cap === 'shell') {

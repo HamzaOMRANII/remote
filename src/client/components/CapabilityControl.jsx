@@ -89,7 +89,7 @@ export default function CapabilityControl({ device, cap, action, runStream, send
   }
 
   if (cap.cap === 'discovery') {
-    return <DiscoveryPanel device={device} cap={cap} runStream={runStream} />;
+    return <DiscoveryPanel device={device} cap={cap} runStream={runStream} action={action} />;
   }
 
   if (cap.cap === 'shell') {

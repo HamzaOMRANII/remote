@@ -57,19 +57,15 @@ export default function Connect() {
   // sources
   const [cameras, setCameras] = useState([]);
   const [mics, setMics] = useState([]);
-  const [sourceType, setSourceType] = useState('device'); // 'device' | 'ip'
   const [cameraId, setCameraId] = useState('');
   const [micId, setMicId] = useState('');
   const [micOn, setMicOn] = useState(false);
-  const [ipUrl, setIpUrl] = useState('');
 
   const wsRef = useRef(null);
   const streamRef = useRef(null);
   const pcsRef = useRef(new Map());     // viewerId -> RTCPeerConnection
   const iceRef = useRef([{ urls: 'stun:stun.l.google.com:19302' }]);
   const localVideo = useRef(null);
-  const canvasRef = useRef(null);
-  const rafRef = useRef(null);
   const retry = useRef(1000);
   const stop = useRef(false);
 
@@ -88,36 +84,16 @@ export default function Connect() {
   }
 
   function stopStream() {
-    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
     if (streamRef.current) { streamRef.current.getTracks().forEach((t) => t.stop()); streamRef.current = null; }
   }
 
   // Build the outgoing MediaStream from the current selections.
   async function acquireStream() {
     stopStream();
-    let stream;
-    if (sourceType === 'ip') {
-      if (!ipUrl.trim()) throw new Error('enter the IP camera stream URL');
-      const canvas = canvasRef.current || Object.assign(document.createElement('canvas'), { width: 1280, height: 720 });
-      canvasRef.current = canvas;
-      const ctx = canvas.getContext('2d');
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.src = ipUrl.trim();
-      await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error('cannot load stream (CORS/format)')); setTimeout(res, 1500); });
-      const draw = () => { try { ctx.drawImage(img, 0, 0, canvas.width, canvas.height); } catch {} rafRef.current = requestAnimationFrame(draw); };
-      draw();
-      stream = canvas.captureStream(15); // may throw if the image is cross-origin-tainted
-      if (micOn) {
-        const a = await navigator.mediaDevices.getUserMedia({ audio: micId ? { deviceId: { exact: micId } } : true });
-        a.getAudioTracks().forEach((t) => stream.addTrack(t));
-      }
-    } else {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: cameraId ? { deviceId: { exact: cameraId } } : { facingMode: 'environment' },
-        audio: micOn ? (micId ? { deviceId: { exact: micId } } : true) : false,
-      });
-    }
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: cameraId ? { deviceId: { exact: cameraId } } : { facingMode: 'environment' },
+      audio: micOn ? (micId ? { deviceId: { exact: micId } } : true) : false,
+    });
     streamRef.current = stream;
     if (localVideo.current) localVideo.current.srcObject = stream;
     return stream;
@@ -342,22 +318,14 @@ export default function Connect() {
               {/* source controls */}
               <div className="cap-block" style={{ marginTop: 0 }}>
                 <div className="cap-head">Video source</div>
-                <label className="field"><span>Type</span>
-                  <select value={sourceType} onChange={(e) => { setSourceType(e.target.value); }}>
-                    <option value="device">Camera (built-in / USB / USB-C / Bluetooth)</option>
-                    <option value="ip">IP camera (MJPEG URL — experimental)</option>
+                <label className="field"><span>Camera (built-in / USB / USB-C / Bluetooth)</span>
+                  <select value={cameraId} onChange={(e) => setCameraId(e.target.value)}>
+                    {cameras.length === 0 && <option value="">(no cameras found)</option>}
+                    {cameras.map((c, i) => <option key={c.deviceId} value={c.deviceId}>{c.label || `Camera ${i + 1}`}</option>)}
                   </select></label>
-
-                {sourceType === 'device' ? (
-                  <label className="field"><span>Camera</span>
-                    <select value={cameraId} onChange={(e) => setCameraId(e.target.value)}>
-                      {cameras.length === 0 && <option value="">(no cameras found)</option>}
-                      {cameras.map((c, i) => <option key={c.deviceId} value={c.deviceId}>{c.label || `Camera ${i + 1}`}</option>)}
-                    </select></label>
-                ) : (
-                  <label className="field"><span>Stream URL (MJPEG, CORS-enabled)</span>
-                    <input type="text" placeholder="http://192.168.1.50/video.mjpg" value={ipUrl} onChange={(e) => setIpUrl(e.target.value)} /></label>
-                )}
+                <p className="muted rem-sub" style={{ margin: '0 0 6px' }}>
+                  Network (IP) cameras don't go here: run the Remote agent on this computer (or the Remote app on a phone at home),
+                  then on the dashboard press <b>Scan for cameras</b> and <b>Add</b> — only the camera's own password, no link.</p>
 
                 <div className="cap-head" style={{ marginTop: 6 }}>Microphone</div>
                 <div className="ctl-row">
@@ -376,8 +344,7 @@ export default function Connect() {
                   <button className="secondary" onClick={changeSources}>Apply sources</button>
                   <button className="secondary" onClick={enumerate}>Refresh list</button>
                 </div>
-                {sourceType === 'ip' && <p className="muted rem-sub" style={{ marginTop: 8 }}>
-                  RTSP IP cameras need a server-side gateway (planned). Only MJPEG/HTTP streams that send CORS headers work in-browser.</p>}
+
               </div>
 
               <button className="secondary" onClick={disconnect}>Disconnect</button>
